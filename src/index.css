@@ -27,6 +27,7 @@
   --ring: 0 0% 60%;
   --brand: 136 60% 80%;               /* #AEE9BD mint accent */
   --radius: 0.6rem;
+  --mirror: rgba(9,105,218,0.22);
 }
 
 .dark {
@@ -51,6 +52,7 @@
   --input: 213 12% 24%;
   --ring: 212 12% 40%;
   --brand: 136 60% 80%;
+  --mirror: rgba(68,147,248,0.32);
 }
 
 * { border-color: hsl(var(--border)); }
@@ -74,3 +76,6 @@ body {
 
 /* Native textarea selection tint */
 #md-raw::selection { background: hsl(var(--brand) / 0.25); }
+
+/* Mirrored selection: highlight in the preview matching the raw selection */
+::highlight(md-mirror) { background-color: var(--mirror); }

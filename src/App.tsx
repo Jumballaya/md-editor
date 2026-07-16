@@ -110,6 +110,48 @@ function renderFrontValue(value: FrontValue) {
   return <span className="break-words">{value}</span>;
 }
 
+// --- Selection mirroring: match selected text across the two panes ---
+type RawIndex = { norm: string; map: number[] };
+type PreviewIndex = { norm: string; nodes: Node[]; offs: number[] };
+
+function collapseWs(str: string): string {
+  return str.replace(/\s+/g, " ");
+}
+// Normalized text of the raw source + a map from each normalized char to its
+// original string index (whitespace runs collapse to one space).
+function buildRawIndex(value: string): RawIndex {
+  let norm = "";
+  const map: number[] = [];
+  let prevSpace = false;
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (/\s/.test(c)) {
+      if (!prevSpace) { norm += " "; map.push(i); prevSpace = true; }
+    } else { norm += c; map.push(i); prevSpace = false; }
+  }
+  return { norm, map };
+}
+// Same for the rendered preview, mapping each normalized char back to a
+// (text node, offset) so we can build a Range for the CSS Custom Highlight.
+function buildPreviewIndex(root: HTMLElement): PreviewIndex {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let norm = "";
+  const nodes: Node[] = [];
+  const offs: number[] = [];
+  let prevSpace = false;
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const t = node.nodeValue ?? "";
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (/\s/.test(c)) {
+        if (!prevSpace) { norm += " "; nodes.push(node); offs.push(i); prevSpace = true; }
+      } else { norm += c; nodes.push(node); offs.push(i); prevSpace = false; }
+    }
+  }
+  return { norm, nodes, offs };
+}
+
 function loadFiles(): MdFile[] {
   try {
     const raw = localStorage.getItem(LS_FILES);
@@ -144,6 +186,13 @@ export default function App() {
   const [dragActive, setDragActive] = useState(false);
   const dragDepth = useRef(0);
   const [showMeta, setShowMeta] = useState(true);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const previewRef = useRef<HTMLElement | null>(null);
+  const mirrorHlRef = useRef<any>(null);
+  const previewIndexRef = useRef<PreviewIndex | null>(null);
+  const rawIndex = useMemo(() => buildRawIndex(content), [content]);
+  const rawIndexRef = useRef(rawIndex);
+  rawIndexRef.current = rawIndex;
 
   const dirtyRef = useRef(false);
   const debounceRef = useRef<number | null>(null);
@@ -279,6 +328,84 @@ export default function App() {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+
+  // Register a CSS Custom Highlight for the preview mirror (Chromium/modern).
+  useEffect(() => {
+    const g = window as any;
+    if (!g.Highlight || !(CSS as any).highlights) return;
+    const hl = new g.Highlight();
+    (CSS as any).highlights.set("md-mirror", hl);
+    mirrorHlRef.current = hl;
+    return () => {
+      (CSS as any).highlights.delete("md-mirror");
+      mirrorHlRef.current = null;
+    };
+  }, []);
+
+  // Rebuild the preview text index whenever the rendered HTML changes.
+  useEffect(() => {
+    if (previewRef.current) previewIndexRef.current = buildPreviewIndex(previewRef.current);
+    mirrorHlRef.current?.clear?.();
+  }, [html]);
+
+  // Mirror the selection from one pane onto the other.
+  useEffect(() => {
+    function mirrorFromRaw() {
+      const ta = editorRef.current;
+      const hl = mirrorHlRef.current;
+      const pi = previewIndexRef.current;
+      if (!ta || !hl || !pi) return;
+      hl.clear();
+      const needle = collapseWs(ta.value.slice(ta.selectionStart, ta.selectionEnd)).trim();
+      if (needle.length < 3) return;
+      const idx = pi.norm.indexOf(needle);
+      if (idx < 0) return;
+      const end = idx + needle.length - 1;
+      try {
+        const r = document.createRange();
+        r.setStart(pi.nodes[idx], pi.offs[idx]);
+        r.setEnd(pi.nodes[end], pi.offs[end] + 1);
+        hl.add(r);
+      } catch { /* stale nodes */ }
+    }
+    function mirrorFromPreview(sel: Selection) {
+      const ta = editorRef.current;
+      const ri = rawIndexRef.current;
+      if (!ta || !ri) return;
+      const needle = collapseWs(sel.toString()).trim();
+      if (needle.length < 3) return;
+      const idx = ri.norm.indexOf(needle);
+      if (idx < 0) return;
+      const start = ri.map[idx];
+      const stop = ri.map[idx + needle.length - 1] + 1;
+      if (ta.selectionStart === start && ta.selectionEnd === stop) return; // avoid loop
+      ta.setSelectionRange(start, stop);
+    }
+    function onSel() {
+      const ta = editorRef.current;
+      const sel = window.getSelection();
+      if (ta && document.activeElement === ta && ta.selectionStart !== ta.selectionEnd) {
+        mirrorFromRaw();
+        return;
+      }
+      if (sel && !sel.isCollapsed && previewRef.current && previewRef.current.contains(sel.anchorNode)) {
+        mirrorHlRef.current?.clear?.();
+        mirrorFromPreview(sel);
+        return;
+      }
+      mirrorHlRef.current?.clear?.();
+    }
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; onSel(); });
+    };
+    document.addEventListener("selectionchange", schedule);
+    return () => {
+      document.removeEventListener("selectionchange", schedule);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
 
   // Drag-and-drop markdown files onto the window to open them.
   function dragHasFiles(e: React.DragEvent) {
@@ -439,6 +566,7 @@ export default function App() {
           </div>
           <Textarea
             id="md-raw"
+            ref={editorRef}
             value={content}
             spellCheck={false}
             onChange={(e) => onContentChange(e.target.value)}
@@ -497,6 +625,7 @@ export default function App() {
               </div>
             )}
             <article
+              ref={previewRef as any}
               className="markdown-body"
               data-color-mode={theme}
               data-light-theme="light"
