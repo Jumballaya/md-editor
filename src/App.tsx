@@ -111,25 +111,87 @@ function renderFrontValue(value: FrontValue) {
 }
 
 // --- Selection mirroring: match selected text across the two panes ---
-type RawIndex = { norm: string; map: number[] };
+type SourceMap = { txt: string; map: number[]; norm: string; nmap: number[] };
 type PreviewIndex = { norm: string; nodes: Node[]; offs: number[] };
 
 function collapseWs(str: string): string {
   return str.replace(/\s+/g, " ");
 }
-// Normalized text of the raw source + a map from each normalized char to its
-// original string index (whitespace runs collapse to one space).
-function buildRawIndex(value: string): RawIndex {
-  let norm = "";
+// Build a markdown source map: the rendered plain text (markers stripped) plus,
+// per character, the index back into the raw `content`. This lets a selection on
+// one pane map to the corresponding text on the other even across list bullets,
+// emphasis (**/_), inline code, headings, and blockquote markers.
+function buildSourceMap(content: string): SourceMap {
+  const { body } = parseFrontmatter(content);
+  const fmOffset = content.length - body.length;
+  let tokens: any[] = [];
+  try { tokens = (marked as any).lexer(body); } catch { tokens = []; }
+
+  let cursor = 0;
+  let txt = "";
   const map: number[] = [];
-  let prevSpace = false;
-  for (let i = 0; i < value.length; i++) {
-    const c = value[i];
-    if (/\s/.test(c)) {
-      if (!prevSpace) { norm += " "; map.push(i); prevSpace = true; }
-    } else { norm += c; map.push(i); prevSpace = false; }
+
+  const emit = (visIn: string) => {
+    let vis = visIn;
+    if (!vis) return;
+    let at = body.indexOf(vis, cursor);
+    if (at < 0) {
+      const tv = vis.trim();
+      if (tv) { at = body.indexOf(tv, cursor); if (at >= 0) vis = tv; }
+    }
+    if (at < 0) {
+      for (let i = 0; i < vis.length; i++) { txt += vis[i]; map.push(cursor + fmOffset); }
+      return;
+    }
+    for (let i = 0; i < vis.length; i++) { txt += vis[i]; map.push(at + i + fmOffset); }
+    cursor = at + vis.length;
+  };
+  const sep = () => { txt += "\n"; map.push(cursor + fmOffset); };
+
+  const inline = (toks: any[]) => {
+    for (const t of toks || []) {
+      switch (t.type) {
+        case "text": t.tokens ? inline(t.tokens) : emit(t.text ?? t.raw); break;
+        case "escape": emit(t.text); break;
+        case "strong": case "em": case "del": inline(t.tokens || []); break;
+        case "codespan": emit(t.text); break;
+        case "link": inline(t.tokens || []); break;
+        case "image": emit(t.text || ""); break;
+        case "br": txt += " "; map.push(cursor + fmOffset); break;
+        case "html": break;
+        default: if (t.tokens) inline(t.tokens); else if (t.text) emit(t.text); break;
+      }
+    }
+  };
+  const blocks = (toks: any[]) => {
+    for (const t of toks || []) {
+      switch (t.type) {
+        case "heading": case "paragraph": inline(t.tokens || []); sep(); break;
+        case "text": t.tokens ? inline(t.tokens) : emit(t.text ?? t.raw); sep(); break;
+        case "blockquote": blocks(t.tokens || []); break;
+        case "list": for (const it of t.items || []) { blocks(it.tokens || []); sep(); } break;
+        case "code": emit(t.text || ""); sep(); break;
+        case "table":
+          for (const cell of t.header || []) { inline(cell.tokens || []); sep(); }
+          for (const row of t.rows || []) for (const cell of row || []) { inline(cell.tokens || []); sep(); }
+          break;
+        case "space": case "hr": case "html": break;
+        default: if (t.tokens) blocks(t.tokens); break;
+      }
+    }
+  };
+  blocks(tokens);
+
+  // whitespace-collapsed view + map back to txt indices
+  let norm = "";
+  const nmap: number[] = [];
+  let prev = false;
+  for (let i = 0; i < txt.length; i++) {
+    const c = txt[i];
+    if (/\s/.test(c)) { if (!prev) { norm += " "; nmap.push(i); prev = true; } }
+    else { norm += c; nmap.push(i); prev = false; }
   }
-  return { norm, map };
+  return { txt, map, norm, nmap };
 }
 // Same for the rendered preview, mapping each normalized char back to a
 // (text node, offset) so we can build a Range for the CSS Custom Highlight.
@@ -190,9 +252,9 @@ export default function App() {
   const previewRef = useRef<HTMLElement | null>(null);
   const mirrorHlRef = useRef<any>(null);
   const previewIndexRef = useRef<PreviewIndex | null>(null);
-  const rawIndex = useMemo(() => buildRawIndex(content), [content]);
-  const rawIndexRef = useRef(rawIndex);
-  rawIndexRef.current = rawIndex;
+  const sourceMap = useMemo(() => buildSourceMap(content), [content]);
+  const sourceMapRef = useRef(sourceMap);
+  sourceMapRef.current = sourceMap;
 
   const dirtyRef = useRef(false);
   const debounceRef = useRef<number | null>(null);
@@ -354,10 +416,19 @@ export default function App() {
       const ta = editorRef.current;
       const hl = mirrorHlRef.current;
       const pi = previewIndexRef.current;
-      if (!ta || !hl || !pi) return;
+      const sm = sourceMapRef.current;
+      if (!ta || !hl || !pi || !sm) return;
       hl.clear();
-      const needle = collapseWs(ta.value.slice(ta.selectionStart, ta.selectionEnd)).trim();
-      if (needle.length < 3) return;
+      const s = ta.selectionStart;
+      const e = ta.selectionEnd;
+      // rendered-text range whose source indices fall inside the raw selection
+      let a = -1;
+      let b = -1;
+      for (let i = 0; i < sm.map.length; i++) { if (sm.map[i] >= s) { a = i; break; } }
+      for (let i = sm.map.length - 1; i >= 0; i--) { if (sm.map[i] < e) { b = i + 1; break; } }
+      if (a < 0 || b <= a) return;
+      const needle = collapseWs(sm.txt.slice(a, b)).trim();
+      if (needle.length < 2) return;
       const idx = pi.norm.indexOf(needle);
       if (idx < 0) return;
       const end = idx + needle.length - 1;
@@ -370,14 +441,16 @@ export default function App() {
     }
     function mirrorFromPreview(sel: Selection) {
       const ta = editorRef.current;
-      const ri = rawIndexRef.current;
-      if (!ta || !ri) return;
+      const sm = sourceMapRef.current;
+      if (!ta || !sm) return;
       const needle = collapseWs(sel.toString()).trim();
-      if (needle.length < 3) return;
-      const idx = ri.norm.indexOf(needle);
+      if (needle.length < 2) return;
+      const idx = sm.norm.indexOf(needle);
       if (idx < 0) return;
-      const start = ri.map[idx];
-      const stop = ri.map[idx + needle.length - 1] + 1;
+      const ts = sm.nmap[idx];
+      const te = sm.nmap[idx + needle.length - 1] + 1;
+      const start = sm.map[ts];
+      const stop = sm.map[te - 1] + 1;
       if (ta.selectionStart === start && ta.selectionEnd === stop) return; // avoid loop
       ta.setSelectionRange(start, stop);
     }
