@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { parseFrontmatter, renderMarkdown, type FrontValue } from "@/lib/markdown";
-import { createEditor, themeCompartment, themeExtensions, setMirrorLines } from "@/lib/cm";
+import { createEditor, themeCompartment, themeExtensions, setMirror } from "@/lib/cm";
 
 const LS_FILES = "mdedit.files.v2";
 const LS_ACTIVE = "mdedit.activeId.v2";
@@ -62,6 +62,108 @@ function renderFrontValue(value: FrontValue) {
   return <span className="break-words">{value}</span>;
 }
 
+function decodeEntities(s: string): string {
+  if (s.indexOf("&") < 0) return s;
+  return s
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+function collapse(s: string): string { return s.replace(/\s+/g, " ").trim(); }
+
+// Marker-free, whitespace-collapsed text of a raw markdown fragment (a "needle").
+function stripNorm(src: string): string {
+  const s = src
+    .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*`~]/g, "")
+    .replace(/(^|[^\w])_([^_]*)_(?=[^\w]|$)/g, "$1$2");
+  return collapse(decodeEntities(s));
+}
+
+// Char-level stripped index of a source slice -> normalized text + map back to
+// absolute document offsets (for mapping a preview selection to editor chars).
+function strippedIndex(src: string, base: number): { norm: string; nmap: number[] } {
+  const out: string[] = [];
+  const map: number[] = [];
+  const lines = src.split("\n");
+  let pos = 0;
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    let lead = 0;
+    while (lead < line.length && lead < 3 && line[lead] === " ") lead++;
+    const mm = /^(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/.exec(line.slice(lead));
+    const contentStart = lead + (mm ? mm[0].length : 0);
+    for (let i = 0; i < line.length; i++) {
+      if (i < contentStart) continue;
+      const c = line[i];
+      if (c === "*" || c === "`" || c === "~") continue;
+      if (c === "_") {
+        const p = i > 0 ? line[i - 1] : " ";
+        const n = i + 1 < line.length ? line[i + 1] : " ";
+        if (!/\w/.test(p) || !/\w/.test(n)) continue;
+      }
+      out.push(c); map.push(base + pos + i);
+    }
+    if (li < lines.length - 1) { out.push(" "); map.push(base + pos + line.length); }
+    pos += line.length + 1;
+  }
+  let norm = "";
+  const nmap: number[] = [];
+  let prev = false;
+  for (let k = 0; k < out.length; k++) {
+    const c = out[k];
+    if (/\s/.test(c)) { if (!prev) { norm += " "; nmap.push(map[k]); prev = true; } }
+    else { norm += c; nmap.push(map[k]); prev = false; }
+  }
+  return { norm, nmap };
+}
+
+// Normalized text of a preview element + per-char (node, offset) for building ranges.
+function buildDomIndex(root: HTMLElement): { norm: string; nodes: Node[]; offs: number[] } {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let norm = "";
+  const nodes: Node[] = [];
+  const offs: number[] = [];
+  let prev = false;
+  let n: Node | null;
+  while ((n = walker.nextNode())) {
+    const t = n.nodeValue || "";
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (/\s/.test(c)) { if (!prev) { norm += " "; nodes.push(n); offs.push(i); prev = true; } }
+      else { norm += c; nodes.push(n); offs.push(i); prev = false; }
+    }
+  }
+  return { norm, nodes, offs };
+}
+
+type Leaf = { el: HTMLElement; line: number };
+function leafBlocks(art: HTMLElement, off: number): Leaf[] {
+  const all = Array.from(art.querySelectorAll("[data-source-line]")) as HTMLElement[];
+  return all
+    .filter((el) => !el.querySelector("[data-source-line]"))
+    .map((el) => ({ el, line: parseInt(el.getAttribute("data-source-line") || "0", 10) + off + 1 }))
+    .sort((a, b) => a.line - b.line);
+}
+function intersecting(leaves: Leaf[], startLine: number, endLine: number): Leaf[] {
+  const out: Leaf[] = [];
+  for (let i = 0; i < leaves.length; i++) {
+    const s = leaves[i].line;
+    const e = i + 1 < leaves.length ? leaves[i + 1].line : Infinity;
+    if (s <= endLine && e > startLine) out.push(leaves[i]);
+  }
+  return out;
+}
+function blockElOf(node: Node | null, art: HTMLElement): HTMLElement | null {
+  let el: HTMLElement | null = node && node.nodeType === 3 ? node.parentElement : (node as HTMLElement | null);
+  while (el && el !== art) {
+    if (el.getAttribute && el.getAttribute("data-source-line") !== null) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
 export default function App() {
   const boot = useRef(
     (() => {
@@ -94,6 +196,7 @@ export default function App() {
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastEditorMirrorRef = useRef<string>("");
+  const mirrorHlRef = useRef<any>(null);
 
   const { entries: frontmatter, body, offsetLines } = useMemo(() => parseFrontmatter(content), [content]);
   const html = useMemo(() => renderMarkdown(body), [body]);
@@ -123,47 +226,23 @@ export default function App() {
     debounceRef.current = window.setTimeout(() => commitContent(), AUTOSAVE_DEBOUNCE);
   }
 
-  // ---- preview mirror (editor selection -> highlight preview blocks) ----
-  const clearPreviewMirror = useCallback(() => {
-    const art = previewArticleRef.current;
-    if (art) art.querySelectorAll(".mirror-block").forEach((el) => el.classList.remove("mirror-block"));
-  }, []);
-  const highlightPreviewBlocks = useCallback((startDocLine: number, endDocLine: number) => {
-    const art = previewArticleRef.current;
-    if (!art) return;
-    clearPreviewMirror();
-    const off = offsetRef.current;
-    // leaf blocks (li, p, headings, code) so a selection inside a list highlights
-    // the specific items, not the whole list.
-    const all = Array.from(art.querySelectorAll("[data-source-line]")) as HTMLElement[];
-    const leaves = all.filter((el) => !el.querySelector("[data-source-line]"));
-    const lined = leaves
-      .map((el) => ({ el, line: parseInt(el.getAttribute("data-source-line") || "0", 10) + off + 1 }))
-      .sort((a, b) => a.line - b.line);
-    for (let i = 0; i < lined.length; i++) {
-      const s = lined[i].line;
-      const e = i + 1 < lined.length ? lined[i + 1].line : Infinity;
-      if (s <= endDocLine && e > startDocLine) lined[i].el.classList.add("mirror-block");
-    }
-  }, [clearPreviewMirror]);
+  // ---- preview mirror (editor selection -> exact text highlight in preview) ----
+  const clearPreviewMirror = useCallback(() => { mirrorHlRef.current?.clear?.(); }, []);
 
   // ---- editor mirror (preview selection -> highlight editor lines) ----
-  const setEditorMirror = useCallback((loDoc: number, hiDoc: number) => {
+  const setEditorMirror = useCallback((from: number, to: number) => {
     const view = viewRef.current;
     if (!view) return;
-    const doc = view.state.doc;
-    const lo = Math.max(1, Math.min(loDoc, doc.lines));
-    const hi = Math.max(1, Math.min(hiDoc, doc.lines));
-    const key = lo + ":" + hi;
+    const key = from + ":" + to;
     if (lastEditorMirrorRef.current === key) return;
     lastEditorMirrorRef.current = key;
-    view.dispatch({ effects: setMirrorLines.of({ from: doc.line(lo).from, to: doc.line(hi).to }) });
+    view.dispatch({ effects: setMirror.of({ from, to }) });
   }, []);
   const clearEditorMirror = useCallback(() => {
     const view = viewRef.current;
     if (!view || lastEditorMirrorRef.current === "") return;
     lastEditorMirrorRef.current = "";
-    view.dispatch({ effects: setMirrorLines.of(null) });
+    view.dispatch({ effects: setMirror.of(null) });
   }, []);
 
   // ---- scroll anchors (source-line based) ----
@@ -175,16 +254,22 @@ export default function App() {
     const off = offsetRef.current;
     const doc = view.state.doc;
     const cTop = pscroll.getBoundingClientRect().top;
-    const els = Array.from(art.querySelectorAll("[data-source-line]")) as HTMLElement[];
+    // Pin BOTH the top and bottom of every leaf block so alignment stays tight
+    // through tall blocks (a top-only pin drifts mid-block since the two sides
+    // have different line heights).
+    const leaves = leafBlocks(art, off);
     const list: { ey: number; py: number }[] = [{ ey: 0, py: 0 }];
-    for (const el of els) {
-      const bl = parseInt(el.getAttribute("data-source-line") || "", 10);
-      if (isNaN(bl)) continue;
-      const docLine = Math.max(1, Math.min(bl + off + 1, doc.lines));
-      let ey: number;
-      try { ey = view.lineBlockAt(doc.line(docLine).from).top; } catch { continue; }
-      const py = el.getBoundingClientRect().top - cTop + pscroll.scrollTop;
-      list.push({ ey, py });
+    for (let i = 0; i < leaves.length; i++) {
+      const el = leaves[i].el;
+      const docLine = Math.max(1, Math.min(leaves[i].line, doc.lines));
+      const endLine = Math.max(docLine, Math.min(i + 1 < leaves.length ? leaves[i + 1].line - 1 : doc.lines, doc.lines));
+      const rect = el.getBoundingClientRect();
+      try {
+        const top = view.lineBlockAt(doc.line(docLine).from).top;
+        list.push({ ey: top, py: rect.top - cTop + pscroll.scrollTop });
+        const bottom = view.lineBlockAt(doc.line(endLine).from).bottom;
+        list.push({ ey: bottom, py: rect.bottom - cTop + pscroll.scrollTop });
+      } catch { /* skip */ }
     }
     list.push({
       ey: Math.max(0, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight),
@@ -248,13 +333,43 @@ export default function App() {
   }, []);
   const onSelection = useCallback((from: number, to: number, empty: boolean) => {
     if (programmaticRef.current) return;
-    if (empty) { clearPreviewMirror(); return; }
+    const hl = mirrorHlRef.current;
     const view = viewRef.current;
-    if (!view) return;
-    const s = view.state.doc.lineAt(from).number;
-    const e = view.state.doc.lineAt(to).number;
-    highlightPreviewBlocks(s, e);
-  }, [clearPreviewMirror, highlightPreviewBlocks]);
+    const art = previewArticleRef.current;
+    if (!hl || !view || !art) return;
+    hl.clear();
+    if (empty) return;
+    const off = offsetRef.current;
+    const startDocLine = view.state.doc.lineAt(from).number;
+    const endDocLine = view.state.doc.lineAt(to).number;
+    const leaves = leafBlocks(art, off);
+    const hit = intersecting(leaves, startDocLine, endDocLine);
+    if (!hit.length) return;
+    try {
+      if (hit.length === 1) {
+        const el = hit[0].el;
+        const needle = stripNorm(view.state.doc.sliceString(from, to));
+        const di = buildDomIndex(el);
+        const idx = needle.length >= 2 ? di.norm.indexOf(needle) : -1;
+        if (idx >= 0) {
+          const end = idx + needle.length - 1;
+          const r = document.createRange();
+          r.setStart(di.nodes[idx], di.offs[idx]);
+          r.setEnd(di.nodes[end], di.offs[end] + 1);
+          hl.add(r);
+          return;
+        }
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        hl.add(r);
+        return;
+      }
+      const r = document.createRange();
+      r.setStartBefore(hit[0].el);
+      r.setEndAfter(hit[hit.length - 1].el);
+      hl.add(r);
+    } catch { /* stale nodes */ }
+  }, []);
   const docChangeRef = useRef(onDocChange); docChangeRef.current = onDocChange;
   const selectionRef = useRef(onSelection); selectionRef.current = onSelection;
   const scrollRef = useRef(onEditorScroll); scrollRef.current = onEditorScroll;
@@ -314,8 +429,19 @@ export default function App() {
   useEffect(() => { localStorage.setItem(LS_FILES, JSON.stringify(files)); }, [files]);
   useEffect(() => { localStorage.setItem(LS_LOCK, locked ? "1" : "0"); if (locked) recomputeAnchors(); }, [locked, recomputeAnchors]);
 
+  // register a CSS Custom Highlight for exact preview-side mirror ranges
+  useEffect(() => {
+    const g = window as any;
+    if (!g.Highlight || !(CSS as any).highlights) return;
+    const hl = new g.Highlight();
+    (CSS as any).highlights.set("md-mirror", hl);
+    mirrorHlRef.current = hl;
+    return () => { (CSS as any).highlights.delete("md-mirror"); mirrorHlRef.current = null; };
+  }, []);
+
   // recompute anchors after render / on resize
   useEffect(() => {
+    mirrorHlRef.current?.clear?.();
     const id = requestAnimationFrame(() => requestAnimationFrame(() => recomputeAnchors()));
     return () => cancelAnimationFrame(id);
   }, [html, recomputeAnchors]);
@@ -333,28 +459,41 @@ export default function App() {
   }, [commitContent]);
 
   useEffect(() => {
-    function blockLineOf(node: Node | null): number | null {
-      let el: HTMLElement | null = node && node.nodeType === 3 ? node.parentElement : (node as HTMLElement | null);
-      const art = previewArticleRef.current;
-      while (el && el !== art) {
-        if (el.hasAttribute && el.hasAttribute("data-source-line"))
-          return parseInt(el.getAttribute("data-source-line") || "0", 10) + offsetRef.current + 1;
-        el = el.parentElement;
-      }
-      return null;
+    function srcRange(el: HTMLElement, leaves: Leaf[], doc: any): { from: number; to: number } {
+      const dl = Math.max(1, Math.min(parseInt(el.getAttribute("data-source-line") || "0", 10) + offsetRef.current + 1, doc.lines));
+      const idx = leaves.findIndex((L) => L.el === el);
+      const nextLine = idx >= 0 && idx + 1 < leaves.length ? leaves[idx + 1].line : doc.lines + 1;
+      const toLine = Math.max(dl, Math.min(nextLine - 1, doc.lines));
+      return { from: doc.line(dl).from, to: doc.line(toLine).to };
     }
     function onSel() {
       const sel = window.getSelection();
       const art = previewArticleRef.current;
-      if (sel && !sel.isCollapsed && art && sel.anchorNode && art.contains(sel.anchorNode)) {
-        const rg = sel.getRangeAt(0);
-        const a = blockLineOf(rg.startContainer);
-        const b = blockLineOf(rg.endContainer);
-        if (a == null || b == null) { clearEditorMirror(); return; }
-        setEditorMirror(Math.min(a, b), Math.max(a, b));
-      } else {
+      const view = viewRef.current;
+      if (!(sel && !sel.isCollapsed && art && sel.anchorNode && art.contains(sel.anchorNode)) || !view) {
         clearEditorMirror();
+        return;
       }
+      const rg = sel.getRangeAt(0);
+      const startEl = blockElOf(rg.startContainer, art);
+      const endEl = blockElOf(rg.endContainer, art);
+      if (!startEl) { clearEditorMirror(); return; }
+      const doc = view.state.doc;
+      const leaves = leafBlocks(art, offsetRef.current);
+      if (startEl === endEl) {
+        const { from, to } = srcRange(startEl, leaves, doc);
+        const needle = collapse(sel.toString());
+        if (needle.length >= 2) {
+          const { norm, nmap } = strippedIndex(doc.sliceString(from, to), from);
+          const idx = norm.indexOf(needle);
+          if (idx >= 0) { setEditorMirror(nmap[idx], nmap[idx + needle.length - 1] + 1); return; }
+        }
+        setEditorMirror(from, to);
+        return;
+      }
+      const a = srcRange(startEl, leaves, doc);
+      const b = srcRange(endEl, leaves, doc);
+      setEditorMirror(Math.min(a.from, b.from), Math.max(a.to, b.to));
     }
     let raf = 0;
     const schedule = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; onSel(); }); };
