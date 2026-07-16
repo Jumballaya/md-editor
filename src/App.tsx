@@ -63,6 +63,8 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [status, setStatus] = useState<{ kind: "saved" | "saving"; at?: string }>({ kind: "saved" });
+  const [dragActive, setDragActive] = useState(false);
+  const dragDepth = useRef(0);
 
   const dirtyRef = useRef(false);
   const debounceRef = useRef<number | null>(null);
@@ -150,8 +152,12 @@ export default function App() {
     setActiveId(f.id);
   }
 
-  async function uploadFiles(list: FileList | null) {
-    if (!list || !list.length) return;
+  function isMarkdownFile(f: File) {
+    return /\.(md|markdown|mdx|txt)$/i.test(f.name) || f.type === "text/markdown" || f.type === "text/plain";
+  }
+
+  async function uploadFiles(list: FileList | File[] | null) {
+    if (!list || !("length" in list) || !list.length) return;
     commitContent();
     const created: MdFile[] = [];
     for (const file of Array.from(list)) {
@@ -191,6 +197,46 @@ export default function App() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  // Drag-and-drop markdown files onto the window to open them.
+  function dragHasFiles(e: React.DragEvent) {
+    return Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  }
+  function onDragEnter(e: React.DragEvent) {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragActive(true);
+  }
+  function onDragOver(e: React.DragEvent) {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }
+  function onDragLeave(e: React.DragEvent) {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragActive(false);
+  }
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragActive(false);
+    const files = Array.from(e.dataTransfer.files).filter(isMarkdownFile);
+    if (files.length) void uploadFiles(files);
+  }
+
+  // Stop the browser/Electron from navigating to a file dropped outside the target.
+  useEffect(() => {
+    const prevent = (e: Event) => e.preventDefault();
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, []);
+
   // Cmd/Ctrl+S flush
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -216,7 +262,23 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-background text-foreground">
+    <div
+      className="relative flex h-full flex-col bg-background text-foreground"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragActive && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-brand px-10 py-8 text-center">
+            <Upload className="h-8 w-8 text-brand" />
+            <div className="text-base font-semibold">Drop markdown files to open</div>
+            <div className="text-xs text-muted-foreground">.md .markdown .mdx .txt</div>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <header className="flex flex-none flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
         <div className="flex select-none items-center gap-2 pr-1 font-semibold tracking-tight">
