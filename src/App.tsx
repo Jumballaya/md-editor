@@ -117,6 +117,9 @@ type PreviewIndex = { norm: string; nodes: Node[]; offs: number[] };
 function collapseWs(str: string): string {
   return str.replace(/\s+/g, " ");
 }
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 // Build a markdown source map: the rendered plain text (markers stripped) plus,
 // per character, the index back into the raw `content`. This lets a selection on
 // one pane map to the corresponding text on the other even across list bullets,
@@ -252,6 +255,7 @@ export default function App() {
   const previewRef = useRef<HTMLElement | null>(null);
   const mirrorHlRef = useRef<any>(null);
   const previewIndexRef = useRef<PreviewIndex | null>(null);
+  const backdropRef = useRef<HTMLDivElement | null>(null);
   const sourceMap = useMemo(() => buildSourceMap(content), [content]);
   const sourceMapRef = useRef(sourceMap);
   sourceMapRef.current = sourceMap;
@@ -419,6 +423,7 @@ export default function App() {
       const sm = sourceMapRef.current;
       if (!ta || !hl || !pi || !sm) return;
       hl.clear();
+      if (backdropRef.current) backdropRef.current.innerHTML = "";
       const s = ta.selectionStart;
       const e = ta.selectionEnd;
       // rendered-text range whose source indices fall inside the raw selection
@@ -439,20 +444,35 @@ export default function App() {
         hl.add(r);
       } catch { /* stale nodes */ }
     }
+    function paintRaw(start: number, stop: number) {
+      const inner = backdropRef.current;
+      const ta = editorRef.current;
+      if (!inner || !ta) return;
+      const v = ta.value;
+      inner.innerHTML =
+        escapeHtml(v.slice(0, start)) +
+        '<mark class="raw-mark">' +
+        escapeHtml(v.slice(start, stop)) +
+        "</mark>" +
+        escapeHtml(v.slice(stop));
+      inner.style.transform = `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`;
+    }
+    function clearRaw() {
+      if (backdropRef.current) backdropRef.current.innerHTML = "";
+    }
     function mirrorFromPreview(sel: Selection) {
       const ta = editorRef.current;
       const sm = sourceMapRef.current;
       if (!ta || !sm) return;
       const needle = collapseWs(sel.toString()).trim();
-      if (needle.length < 2) return;
+      if (needle.length < 2) { clearRaw(); return; }
       const idx = sm.norm.indexOf(needle);
-      if (idx < 0) return;
+      if (idx < 0) { clearRaw(); return; }
       const ts = sm.nmap[idx];
       const te = sm.nmap[idx + needle.length - 1] + 1;
       const start = sm.map[ts];
       const stop = sm.map[te - 1] + 1;
-      if (ta.selectionStart === start && ta.selectionEnd === stop) return; // avoid loop
-      ta.setSelectionRange(start, stop);
+      paintRaw(start, stop);
     }
     function onSel() {
       const ta = editorRef.current;
@@ -467,6 +487,7 @@ export default function App() {
         return;
       }
       mirrorHlRef.current?.clear?.();
+      if (backdropRef.current) backdropRef.current.innerHTML = "";
     }
     let raf = 0;
     const schedule = () => {
@@ -532,6 +553,12 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+
+  function syncBackdrop() {
+    const inner = backdropRef.current;
+    const ta = editorRef.current;
+    if (inner && ta) inner.style.transform = `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`;
+  }
 
   function onEditorKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Tab") {
@@ -637,17 +664,28 @@ export default function App() {
           <div className="flex h-[34px] flex-none items-center gap-2 border-b bg-card px-4 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
             RAW <span className="opacity-40">·</span> markdown
           </div>
-          <Textarea
-            id="md-raw"
-            ref={editorRef}
-            value={content}
-            spellCheck={false}
-            onChange={(e) => onContentChange(e.target.value)}
-            onKeyDown={onEditorKeyDown}
-            placeholder="# Start typing markdown..."
-            className="h-full flex-1 resize-none overflow-auto whitespace-pre rounded-none p-6 font-mono text-[13.5px] leading-[1.75] caret-[hsl(var(--brand))] focus-visible:ring-0"
-            style={{ tabSize: 2 }}
-          />
+          <div className="relative min-h-0 flex-1">
+            <div className="pointer-events-none absolute inset-0 overflow-hidden">
+              <div
+                ref={backdropRef}
+                aria-hidden
+                className="whitespace-pre p-6 font-mono text-[13.5px] leading-[1.75] text-transparent will-change-transform"
+                style={{ tabSize: 2 }}
+              />
+            </div>
+            <Textarea
+              id="md-raw"
+              ref={editorRef}
+              value={content}
+              spellCheck={false}
+              onChange={(e) => onContentChange(e.target.value)}
+              onKeyDown={onEditorKeyDown}
+              onScroll={syncBackdrop}
+              placeholder="# Start typing markdown..."
+              className="absolute inset-0 h-full w-full resize-none overflow-auto whitespace-pre rounded-none bg-transparent p-6 font-mono text-[13.5px] leading-[1.75] caret-[hsl(var(--brand))] focus-visible:ring-0"
+              style={{ tabSize: 2 }}
+            />
+          </div>
         </ResizablePanel>
 
         <ResizableHandle withHandle />
