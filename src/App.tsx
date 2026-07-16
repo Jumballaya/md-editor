@@ -117,6 +117,17 @@ type PreviewIndex = { norm: string; nodes: Node[]; offs: number[] };
 function collapseWs(str: string): string {
   return str.replace(/\s+/g, " ");
 }
+function decodeEntities(str: string): string {
+  if (str.indexOf("&") === -1) return str;
+  return str
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
 function escapeHtml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -135,7 +146,7 @@ function buildSourceMap(content: string): SourceMap {
   const map: number[] = [];
 
   const emit = (visIn: string) => {
-    let vis = visIn;
+    let vis = decodeEntities(visIn);
     if (!vis) return;
     let at = body.indexOf(vis, cursor);
     if (at < 0) {
