@@ -250,6 +250,14 @@ function domNormIndex(pi: PreviewIndex, node: Node, offset: number): number {
   return last >= 0 ? last + 1 : 0;
 }
 
+// First non-blank text node inside an element (for scroll anchoring).
+function firstTextNode(el: Node): Node | null {
+  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let n = w.nextNode();
+  while (n && !(n.nodeValue && n.nodeValue.trim())) n = w.nextNode();
+  return n;
+}
+
 function loadFiles(): MdFile[] {
   try {
     const raw = localStorage.getItem(LS_FILES);
@@ -291,6 +299,7 @@ export default function App() {
   const backdropRef = useRef<HTMLDivElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
   const scrollSyncingRef = useRef(false);
+  const anchorsRef = useRef<{ raw: number; prev: number }[]>([]);
   const [locked, setLocked] = useState<boolean>(() => localStorage.getItem("mdedit.lock.v1") === "1");
   const sourceMap = useMemo(() => buildSourceMap(content), [content]);
   const sourceMapRef = useRef(sourceMap);
@@ -448,6 +457,7 @@ export default function App() {
   useEffect(() => {
     if (previewRef.current) previewIndexRef.current = buildPreviewIndex(previewRef.current);
     mirrorHlRef.current?.clear?.();
+    requestAnimationFrame(() => recomputeAnchors());
   }, [html]);
 
   // Mirror the selection from one pane onto the other.
@@ -570,6 +580,15 @@ export default function App() {
     if (files.length) void uploadFiles(files);
   }
 
+  // Recompute scroll anchors when the panes resize (splitter drag, window resize).
+  useEffect(() => {
+    const ro = new ResizeObserver(() => recomputeAnchors());
+    if (previewScrollRef.current) ro.observe(previewScrollRef.current);
+    if (editorRef.current) ro.observe(editorRef.current);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Stop the browser/Electron from navigating to a file dropped outside the target.
   useEffect(() => {
     const prevent = (e: Event) => e.preventDefault();
@@ -604,24 +623,80 @@ export default function App() {
     localStorage.setItem("mdedit.lock.v1", locked ? "1" : "0");
   }, [locked]);
 
-  function syncScroll(from: HTMLElement | null, to: HTMLElement | null) {
-    if (!from || !to) return;
-    const fMax = from.scrollHeight - from.clientHeight;
-    const tMax = to.scrollHeight - to.clientHeight;
-    if (fMax <= 0) return;
-    to.scrollTop = (from.scrollTop / fMax) * tMax;
+  // Build (rawY, previewY) anchor pairs by mapping each rendered block back to
+  // its source line, so locked scrolling keeps blocks aligned even when the two
+  // sides have very different heights.
+  function recomputeAnchors() {
+    const editor = editorRef.current;
+    const pscroll = previewScrollRef.current;
+    const art = previewRef.current;
+    const sm = sourceMapRef.current;
+    const pi = previewIndexRef.current;
+    if (!editor || !pscroll || !art || !sm || !pi) { anchorsRef.current = []; return; }
+    const cs = getComputedStyle(editor);
+    const lh = parseFloat(cs.lineHeight) || 20;
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const content = editor.value;
+    const cTop = pscroll.getBoundingClientRect().top;
+    const list: { raw: number; prev: number }[] = [{ raw: 0, prev: 0 }];
+    for (const el of Array.from(art.children) as HTMLElement[]) {
+      const tn = firstTextNode(el);
+      if (!tn) continue;
+      const di = domNormIndex(pi, tn, 0);
+      if (di < 0 || di >= sm.nmap.length) continue;
+      const ci = sm.map[sm.nmap[di]];
+      if (ci == null) continue;
+      let line = 0;
+      for (let i = 0; i < ci && i < content.length; i++) if (content[i] === "\n") line++;
+      const raw = padTop + line * lh;
+      const prev = el.getBoundingClientRect().top - cTop + pscroll.scrollTop;
+      list.push({ raw, prev });
+    }
+    list.push({
+      raw: Math.max(0, editor.scrollHeight - editor.clientHeight),
+      prev: Math.max(0, pscroll.scrollHeight - pscroll.clientHeight),
+    });
+    list.sort((a, b) => a.raw - b.raw);
+    for (let i = 1; i < list.length; i++) if (list[i].prev < list[i - 1].prev) list[i].prev = list[i - 1].prev;
+    anchorsRef.current = list;
+  }
+  function interpAnchor(val: number, fromKey: "raw" | "prev", toKey: "raw" | "prev"): number | null {
+    const a = anchorsRef.current;
+    if (a.length < 2) return null;
+    if (val <= a[0][fromKey]) return a[0][toKey];
+    for (let i = 0; i < a.length - 1; i++) {
+      const lo = a[i], hi = a[i + 1];
+      if (val >= lo[fromKey] && val <= hi[fromKey]) {
+        const span = hi[fromKey] - lo[fromKey];
+        const f = span > 0 ? (val - lo[fromKey]) / span : 0;
+        return lo[toKey] + f * (hi[toKey] - lo[toKey]);
+      }
+    }
+    return a[a.length - 1][toKey];
   }
   function onEditorScroll() {
     syncBackdrop();
     if (!locked || scrollSyncingRef.current) return;
+    const from = editorRef.current;
+    const to = previewScrollRef.current;
+    if (!from || !to) return;
+    if (!anchorsRef.current.length) recomputeAnchors();
+    const target = interpAnchor(from.scrollTop, "raw", "prev");
+    if (target == null) return;
     scrollSyncingRef.current = true;
-    syncScroll(editorRef.current, previewScrollRef.current);
+    to.scrollTop = target;
     requestAnimationFrame(() => { scrollSyncingRef.current = false; });
   }
   function onPreviewScroll() {
     if (!locked || scrollSyncingRef.current) return;
+    const from = previewScrollRef.current;
+    const to = editorRef.current;
+    if (!from || !to) return;
+    if (!anchorsRef.current.length) recomputeAnchors();
+    const target = interpAnchor(from.scrollTop, "prev", "raw");
+    if (target == null) return;
     scrollSyncingRef.current = true;
-    syncScroll(previewScrollRef.current, editorRef.current);
+    to.scrollTop = target;
     syncBackdrop();
     requestAnimationFrame(() => { scrollSyncingRef.current = false; });
   }
