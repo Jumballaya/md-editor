@@ -630,26 +630,39 @@ export default function App() {
     const editor = editorRef.current;
     const pscroll = previewScrollRef.current;
     const art = previewRef.current;
-    const sm = sourceMapRef.current;
-    const pi = previewIndexRef.current;
-    if (!editor || !pscroll || !art || !sm || !pi) { anchorsRef.current = []; return; }
+    if (!editor || !pscroll || !art) { anchorsRef.current = []; return; }
+    const content = editor.value;
+    const { body } = parseFrontmatter(content);
+    const fmOffset = content.length - body.length;
     const cs = getComputedStyle(editor);
     const lh = parseFloat(cs.lineHeight) || 20;
     const padTop = parseFloat(cs.paddingTop) || 0;
-    const content = editor.value;
-    const cTop = pscroll.getBoundingClientRect().top;
-    const list: { raw: number; prev: number }[] = [{ raw: 0, prev: 0 }];
-    for (const el of Array.from(art.children) as HTMLElement[]) {
-      const tn = firstTextNode(el);
-      if (!tn) continue;
-      const di = domNormIndex(pi, tn, 0);
-      if (di < 0 || di >= sm.nmap.length) continue;
-      const ci = sm.map[sm.nmap[di]];
-      if (ci == null) continue;
+
+    // Source line of each rendered block token (skip whitespace-only tokens).
+    let tokens: any[] = [];
+    try { tokens = (marked as any).lexer(body); } catch { tokens = []; }
+    const tokenLines: number[] = [];
+    let cursor = 0;
+    for (const t of tokens) {
+      const raw: string = t.raw ?? "";
+      if (t.type === "space") { cursor += raw.length; continue; }
+      let at = raw ? body.indexOf(raw, cursor) : -1;
+      if (at < 0) at = cursor;
+      const ci = at + fmOffset;
       let line = 0;
-      for (let i = 0; i < ci && i < content.length; i++) if (content[i] === "\n") line++;
-      const raw = padTop + line * lh;
-      const prev = el.getBoundingClientRect().top - cTop + pscroll.scrollTop;
+      for (let k = 0; k < ci && k < content.length; k++) if (content[k] === "\n") line++;
+      tokenLines.push(line);
+      cursor = at + raw.length;
+    }
+
+    // Pair the i-th block token with the i-th rendered child (same document order).
+    const children = Array.from(art.children) as HTMLElement[];
+    const cTop = pscroll.getBoundingClientRect().top;
+    const n = Math.min(tokenLines.length, children.length);
+    const list: { raw: number; prev: number }[] = [{ raw: 0, prev: 0 }];
+    for (let i = 0; i < n; i++) {
+      const prev = children[i].getBoundingClientRect().top - cTop + pscroll.scrollTop;
+      const raw = padTop + tokenLines[i] * lh;
       list.push({ raw, prev });
     }
     list.push({
@@ -657,8 +670,16 @@ export default function App() {
       prev: Math.max(0, pscroll.scrollHeight - pscroll.clientHeight),
     });
     list.sort((a, b) => a.raw - b.raw);
-    for (let i = 1; i < list.length; i++) if (list[i].prev < list[i - 1].prev) list[i].prev = list[i - 1].prev;
-    anchorsRef.current = list;
+    const dedup: { raw: number; prev: number }[] = [];
+    for (const p of list) {
+      if (dedup.length && Math.abs(dedup[dedup.length - 1].raw - p.raw) < 0.5) {
+        if (p.prev > dedup[dedup.length - 1].prev) dedup[dedup.length - 1].prev = p.prev;
+        continue;
+      }
+      dedup.push(p);
+    }
+    for (let i = 1; i < dedup.length; i++) if (dedup[i].prev < dedup[i - 1].prev) dedup[i].prev = dedup[i - 1].prev;
+    anchorsRef.current = dedup;
   }
   function interpAnchor(val: number, fromKey: "raw" | "prev", toKey: "raw" | "prev"): number | null {
     const a = anchorsRef.current;
