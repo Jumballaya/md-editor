@@ -338,6 +338,7 @@ export default function App() {
     const art = previewArticleRef.current;
     if (!hl || !view || !art) return;
     hl.clear();
+    clearEditorMirror(); // editor is the source now; drop any incoming mirror mark
     if (empty) return;
     const off = offsetRef.current;
     const startDocLine = view.state.doc.lineAt(from).number;
@@ -369,7 +370,7 @@ export default function App() {
       r.setEndAfter(hit[hit.length - 1].el);
       hl.add(r);
     } catch { /* stale nodes */ }
-  }, []);
+  }, [clearEditorMirror]);
   const docChangeRef = useRef(onDocChange); docChangeRef.current = onDocChange;
   const selectionRef = useRef(onSelection); selectionRef.current = onSelection;
   const scrollRef = useRef(onEditorScroll); scrollRef.current = onEditorScroll;
@@ -475,6 +476,14 @@ export default function App() {
         return;
       }
       const rg = sel.getRangeAt(0);
+      // preview is the source now: drop the preview's own mirror and collapse the
+      // editor's drawn selection so the two sides never show competing highlights.
+      clearPreviewMirror();
+      if (!view.state.selection.main.empty) {
+        programmaticRef.current = true;
+        view.dispatch({ selection: { anchor: view.state.selection.main.head } });
+        programmaticRef.current = false;
+      }
       const startEl = blockElOf(rg.startContainer, art);
       const endEl = blockElOf(rg.endContainer, art);
       if (!startEl) { clearEditorMirror(); return; }
@@ -499,7 +508,7 @@ export default function App() {
     const schedule = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; onSel(); }); };
     document.addEventListener("selectionchange", schedule);
     return () => { document.removeEventListener("selectionchange", schedule); if (raf) cancelAnimationFrame(raf); };
-  }, [setEditorMirror, clearEditorMirror]);
+  }, [setEditorMirror, clearEditorMirror, clearPreviewMirror]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
