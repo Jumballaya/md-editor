@@ -217,6 +217,28 @@ function buildPreviewIndex(root: HTMLElement): PreviewIndex {
   return { norm, nodes, offs };
 }
 
+function countBelow(arr: number[], val: number): number {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < val) lo = m + 1; else hi = m; }
+  return lo;
+}
+function closestOccurrence(hay: string, needle: string, expected: number): number {
+  let best = -1, bestD = Infinity, from = 0, idx = hay.indexOf(needle, 0);
+  while (idx !== -1) {
+    const d = Math.abs(idx - expected);
+    if (d < bestD) { bestD = d; best = idx; }
+    from = idx + 1;
+    idx = hay.indexOf(needle, from);
+  }
+  return best;
+}
+function domNormIndex(pi: PreviewIndex, node: Node, offset: number): number {
+  for (let i = 0; i < pi.nodes.length; i++) if (pi.nodes[i] === node && pi.offs[i] >= offset) return i;
+  let last = -1;
+  for (let i = 0; i < pi.nodes.length; i++) if (pi.nodes[i] === node) last = i;
+  return last >= 0 ? last + 1 : 0;
+}
+
 function loadFiles(): MdFile[] {
   try {
     const raw = localStorage.getItem(LS_FILES);
@@ -434,7 +456,8 @@ export default function App() {
       if (a < 0 || b <= a) return;
       const needle = collapseWs(sm.txt.slice(a, b)).trim();
       if (needle.length < 2) return;
-      const idx = pi.norm.indexOf(needle);
+      const expected = countBelow(sm.nmap, a);
+      const idx = closestOccurrence(pi.norm, needle, expected);
       if (idx < 0) return;
       const end = idx + needle.length - 1;
       try {
@@ -466,7 +489,10 @@ export default function App() {
       if (!ta || !sm) return;
       const needle = collapseWs(sel.toString()).trim();
       if (needle.length < 2) { clearRaw(); return; }
-      const idx = sm.norm.indexOf(needle);
+      const pi = previewIndexRef.current;
+      let expected = 0;
+      try { const rg = sel.getRangeAt(0); if (pi) expected = domNormIndex(pi, rg.startContainer, rg.startOffset); } catch { /* no range */ }
+      const idx = closestOccurrence(sm.norm, needle, expected);
       if (idx < 0) { clearRaw(); return; }
       const ts = sm.nmap[idx];
       const te = sm.nmap[idx + needle.length - 1] + 1;
