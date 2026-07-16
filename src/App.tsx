@@ -3,7 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import {
   FileText, Plus, Upload, Download, Trash2, Sun, Moon, Pencil, Check,
-  ChevronDown, ChevronRight, SlidersHorizontal,
+  ChevronDown, SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -457,28 +457,32 @@ export default function App() {
           </div>
           <div className="flex-1 overflow-auto">
             {frontmatter.length > 0 && (
-              <div className="mx-auto max-w-[980px] px-6 pt-5">
-                <div className="rounded-lg border bg-card">
-                  <button
-                    type="button"
-                    onClick={() => setShowMeta((v) => !v)}
-                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-secondary/60"
-                  >
-                    {showMeta ? (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    )}
-                    <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Frontmatter
-                    </span>
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      {frontmatter.length} field{frontmatter.length > 1 ? "s" : ""}
-                    </span>
-                  </button>
-                  {showMeta && (
-                    <dl className="grid grid-cols-[max-content_1fr] gap-x-5 gap-y-2 border-t px-4 py-3 text-sm">
+              <div className="border-b px-10 pt-7 pb-5">
+                <button
+                  type="button"
+                  onClick={() => setShowMeta((v) => !v)}
+                  className="flex w-full items-center gap-2 text-left"
+                >
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${
+                      showMeta ? "" : "-rotate-90"
+                    }`}
+                  />
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Frontmatter
+                  </span>
+                  <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                    {frontmatter.length} field{frontmatter.length > 1 ? "s" : ""}
+                  </span>
+                </button>
+                <div
+                  className={`grid transition-all duration-200 ease-out ${
+                    showMeta ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <dl className="grid grid-cols-[max-content_1fr] gap-x-5 gap-y-2.5 pt-4 text-sm">
                       {frontmatter.map(({ key, value }) => (
                         <Fragment key={key}>
                           <dt className="pt-0.5 font-mono text-xs uppercase tracking-wide text-muted-foreground">
@@ -488,7 +492,7 @@ export default function App() {
                         </Fragment>
                       ))}
                     </dl>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
