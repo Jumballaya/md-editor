@@ -3,7 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import {
   FileText, Plus, Upload, Download, Trash2, Sun, Moon, Pencil, Check,
-  ChevronDown, SlidersHorizontal,
+  ChevronDown, SlidersHorizontal, Lock, LockOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -278,6 +278,9 @@ export default function App() {
   const mirrorHlRef = useRef<any>(null);
   const previewIndexRef = useRef<PreviewIndex | null>(null);
   const backdropRef = useRef<HTMLDivElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollSyncingRef = useRef(false);
+  const [locked, setLocked] = useState<boolean>(() => localStorage.getItem("mdedit.lock.v1") === "1");
   const sourceMap = useMemo(() => buildSourceMap(content), [content]);
   const sourceMapRef = useRef(sourceMap);
   sourceMapRef.current = sourceMap;
@@ -586,6 +589,32 @@ export default function App() {
     if (inner && ta) inner.style.transform = `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`;
   }
 
+  useEffect(() => {
+    localStorage.setItem("mdedit.lock.v1", locked ? "1" : "0");
+  }, [locked]);
+
+  function syncScroll(from: HTMLElement | null, to: HTMLElement | null) {
+    if (!from || !to) return;
+    const fMax = from.scrollHeight - from.clientHeight;
+    const tMax = to.scrollHeight - to.clientHeight;
+    if (fMax <= 0) return;
+    to.scrollTop = (from.scrollTop / fMax) * tMax;
+  }
+  function onEditorScroll() {
+    syncBackdrop();
+    if (!locked || scrollSyncingRef.current) return;
+    scrollSyncingRef.current = true;
+    syncScroll(editorRef.current, previewScrollRef.current);
+    requestAnimationFrame(() => { scrollSyncingRef.current = false; });
+  }
+  function onPreviewScroll() {
+    if (!locked || scrollSyncingRef.current) return;
+    scrollSyncingRef.current = true;
+    syncScroll(previewScrollRef.current, editorRef.current);
+    syncBackdrop();
+    requestAnimationFrame(() => { scrollSyncingRef.current = false; });
+  }
+
   function onEditorKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Tab") {
       e.preventDefault();
@@ -673,6 +702,16 @@ export default function App() {
         </Button>
 
         <Separator orientation="vertical" className="mx-1 h-6" />
+        <Button
+          variant="outline"
+          size="icon"
+          aria-pressed={locked}
+          title={locked ? "Scroll locked — click to unlock" : "Lock scroll between panes"}
+          onClick={() => setLocked((v) => !v)}
+          className={locked ? "border-brand bg-brand/15 text-foreground" : ""}
+        >
+          {locked ? <Lock /> : <LockOpen />}
+        </Button>
         <Button variant="outline" size="icon" title="Toggle theme"
           onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
           {theme === "dark" ? <Sun /> : <Moon />}
@@ -706,7 +745,7 @@ export default function App() {
               spellCheck={false}
               onChange={(e) => onContentChange(e.target.value)}
               onKeyDown={onEditorKeyDown}
-              onScroll={syncBackdrop}
+              onScroll={onEditorScroll}
               placeholder="# Start typing markdown..."
               className="absolute inset-0 h-full w-full resize-none overflow-auto whitespace-pre rounded-none bg-transparent p-6 font-mono text-[13.5px] leading-[1.75] caret-[hsl(var(--brand))] focus-visible:ring-0"
               style={{ tabSize: 2 }}
@@ -720,7 +759,7 @@ export default function App() {
           <div className="flex h-[34px] flex-none items-center gap-2 border-b bg-card px-4 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
             PREVIEW <span className="opacity-40">·</span> github <span className="text-brand">●</span>
           </div>
-          <div className="flex-1 overflow-auto">
+          <div ref={previewScrollRef} onScroll={onPreviewScroll} className="flex-1 overflow-auto">
             {frontmatter.length > 0 && (
               <div className="border-b px-10 pt-7 pb-5">
                 <button
