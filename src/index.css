@@ -75,15 +75,16 @@ body {
 }
 
 /* Native textarea selection tint */
-#md-raw::selection { background: hsl(var(--brand) / 0.25); }
 
 /* Mirrored selection: highlight in the preview matching the raw selection */
 ::highlight(md-mirror) { background-color: var(--mirror); }
 
 /* Mirrored selection painted behind the raw textarea */
-.raw-mark { background-color: var(--mirror); color: transparent; border-radius: 2px; }
 
 /* Tailwind Preflight resets top-level lists to list-style:none; GitHub's CSS only
    styles nested lists, so restore markers for top-level ordered/unordered lists. */
 .markdown-body ul { list-style-type: disc; }
 .markdown-body ol { list-style-type: decimal; }
+
+/* Preview block highlighted to mirror the editor selection */
+.markdown-body .mirror-block { background-color: var(--mirror); border-radius: 4px; }
