@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import {
   FileText, Plus, Upload, Download, Trash2, Sun, Moon, Pencil, Check,
+  ChevronDown, ChevronRight, SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,83 @@ function uid() {
 }
 const WELCOME =
   "# Welcome\n\nA **live markdown editor** built with shadcn/ui.\n\n- Type on the left in monospace\n- See the _GitHub-styled_ render on the right\n- Drag the center handle to resize (position is remembered)\n- Toggle light / dark up top\n- Content **autosaves**; rename with the inline button; **Download** exports `.md`\n\n```ts\nconsole.log('everything persists to localStorage');\n```\n\n> Multiple files, one at a time. Use the dropdown up top.\n";
+
+type FrontValue = string | string[] | boolean;
+type Frontmatter = { entries: { key: string; value: FrontValue }[]; body: string };
+
+function unquote(s: string): string {
+  const t = s.trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    return t.slice(1, -1);
+  }
+  return t;
+}
+function parseScalar(s: string): FrontValue {
+  const t = s.trim();
+  if (/^\[.*\]$/.test(t)) {
+    return t.slice(1, -1).split(",").map(unquote).filter((x) => x.length > 0);
+  }
+  if (t === "true") return true;
+  if (t === "false") return false;
+  return unquote(t);
+}
+// Extract a leading YAML frontmatter block (--- ... ---). Returns the parsed
+// key/value entries plus the body with the block removed. If there is no
+// well-formed leading block, entries is empty and body is the original text.
+function parseFrontmatter(text: string): Frontmatter {
+  const m = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
+  if (!m) return { entries: [], body: text };
+  const body = text.slice(m[0].length);
+  const lines = m[1].split(/\r?\n/);
+  const entries: { key: string; value: FrontValue }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+    const km = /^([A-Za-z0-9_.\-]+):\s*(.*)$/.exec(line);
+    if (!km) continue;
+    const key = km[1];
+    const rest = km[2];
+    if (rest === "") {
+      const items: string[] = [];
+      while (i + 1 < lines.length && /^\s*-\s+/.test(lines[i + 1])) {
+        items.push(unquote(lines[++i].replace(/^\s*-\s+/, "")));
+      }
+      entries.push({ key, value: items.length ? items : "" });
+    } else {
+      entries.push({ key, value: parseScalar(rest) });
+    }
+  }
+  return { entries, body };
+}
+
+function renderFrontValue(value: FrontValue) {
+  if (Array.isArray(value)) {
+    if (!value.length) return <span className="text-muted-foreground">-</span>;
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {value.map((item, i) => (
+          <span key={i} className="rounded-full border px-2 py-0.5 text-xs">
+            {item}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  if (typeof value === "boolean") {
+    return (
+      <span
+        className={
+          "inline-block rounded-full px-2 py-0.5 text-xs font-medium " +
+          (value ? "bg-brand/20 text-foreground" : "bg-secondary text-muted-foreground")
+        }
+      >
+        {value ? "true" : "false"}
+      </span>
+    );
+  }
+  if (!value) return <span className="text-muted-foreground">-</span>;
+  return <span className="break-words">{value}</span>;
+}
 
 function loadFiles(): MdFile[] {
   try {
@@ -65,6 +143,7 @@ export default function App() {
   const [status, setStatus] = useState<{ kind: "saved" | "saving"; at?: string }>({ kind: "saved" });
   const [dragActive, setDragActive] = useState(false);
   const dragDepth = useRef(0);
+  const [showMeta, setShowMeta] = useState(true);
 
   const dirtyRef = useRef(false);
   const debounceRef = useRef<number | null>(null);
@@ -98,9 +177,13 @@ export default function App() {
     localStorage.setItem(LS_FILES, JSON.stringify(files));
   }, [files]);
 
-  const html = useMemo(
-    () => DOMPurify.sanitize(marked.parse(content) as string),
+  const { entries: frontmatter, body } = useMemo(
+    () => parseFrontmatter(content),
     [content]
+  );
+  const html = useMemo(
+    () => DOMPurify.sanitize(marked.parse(body) as string),
+    [body]
   );
 
   function timeStr() {
@@ -373,6 +456,42 @@ export default function App() {
             PREVIEW <span className="opacity-40">·</span> github <span className="text-brand">●</span>
           </div>
           <div className="flex-1 overflow-auto">
+            {frontmatter.length > 0 && (
+              <div className="mx-auto max-w-[980px] px-6 pt-5">
+                <div className="rounded-lg border bg-card">
+                  <button
+                    type="button"
+                    onClick={() => setShowMeta((v) => !v)}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-secondary/60"
+                  >
+                    {showMeta ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Frontmatter
+                    </span>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {frontmatter.length} field{frontmatter.length > 1 ? "s" : ""}
+                    </span>
+                  </button>
+                  {showMeta && (
+                    <dl className="grid grid-cols-[max-content_1fr] gap-x-5 gap-y-2 border-t px-4 py-3 text-sm">
+                      {frontmatter.map(({ key, value }) => (
+                        <Fragment key={key}>
+                          <dt className="pt-0.5 font-mono text-xs uppercase tracking-wide text-muted-foreground">
+                            {key}
+                          </dt>
+                          <dd className="min-w-0">{renderFrontValue(value)}</dd>
+                        </Fragment>
+                      ))}
+                    </dl>
+                  )}
+                </div>
+              </div>
+            )}
             <article
               className="markdown-body"
               data-color-mode={theme}
