@@ -638,8 +638,8 @@ export default function App() {
         <input ref={fileInputRef} type="file" accept=".md,.markdown,.mdx,.txt,text/markdown,text/plain" multiple className="hidden"
           onChange={(e) => { void uploadFiles(e.target.files); e.currentTarget.value = ""; }} />
         <Button variant="outline" onClick={newFile}><Plus /> New</Button>
-        <Button variant="outline" onClick={() => fileInputRef.current?.click()}><Upload /> Upload</Button>
-        <Button onClick={downloadActive}><Download /> Download</Button>
+        <Button variant="outline" onClick={() => fileInputRef.current?.click()}><Upload /> Load</Button>
+        <Button onClick={downloadActive}><Download /> Save</Button>
         <Button variant="ghost" onClick={deleteActive} className="text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
           <Trash2 /> Delete
         </Button>
