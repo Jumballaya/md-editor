@@ -6,6 +6,16 @@ support, autosave, upload, and `.md` download. Everything persists to
 `localStorage`. Built with Vite + React + Tailwind + shadcn/ui, and packaged as
 a lightweight desktop app with Electron.
 
+## Screenshots
+
+Light theme:
+
+![Markdown Editor in light mode](docs/screenshot-light.png)
+
+Dark theme:
+
+![Markdown Editor in dark mode](docs/screenshot-dark.png)
+
 ## Download
 
 Grab the latest desktop build from the
