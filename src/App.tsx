@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { EditorView } from "@codemirror/view";
 import {
   FileText, Plus, Upload, Download, Trash2, Sun, Moon, Pencil, Check,
-  ChevronDown, SlidersHorizontal, Lock, LockOpen,
+  ChevronDown, SlidersHorizontal, Lock, LockOpen, Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -164,6 +164,32 @@ function blockElOf(node: Node | null, art: HTMLElement): HTMLElement | null {
   return null;
 }
 
+function toRawUrl(input: string): string {
+  const s = input.trim();
+  try {
+    const u = new URL(s);
+    if (u.hostname === "github.com") {
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (parts.length >= 5 && (parts[2] === "blob" || parts[2] === "raw")) {
+        const [owner, repo, , branch, ...rest] = parts;
+        return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${rest.join("/")}`;
+      }
+    }
+  } catch { /* not a URL; return as-is */ }
+  return s;
+}
+
+function fileNameFromUrl(input: string): string {
+  try {
+    const u = new URL(input.trim());
+    const parts = u.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] || "remote";
+    return decodeURIComponent(last).replace(/\.(md|markdown|mdx|txt)$/i, "").trim() || "remote";
+  } catch {
+    return "remote";
+  }
+}
+
 export default function App() {
   const boot = useRef(
     (() => {
@@ -183,6 +209,10 @@ export default function App() {
   const [locked, setLocked] = useState<boolean>(() => localStorage.getItem(LS_LOCK) === "1");
   const [dragActive, setDragActive] = useState(false);
   const [status, setStatus] = useState<{ kind: "saved" | "saving"; at?: string }>({ kind: "saved" });
+  const [urlOpen, setUrlOpen] = useState(false);
+  const [urlValue, setUrlValue] = useState("");
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const [urlLoading, setUrlLoading] = useState(false);
 
   const cmParentRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -197,6 +227,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastEditorMirrorRef = useRef<string>("");
   const mirrorHlRef = useRef<any>(null);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
 
   const { entries: frontmatter, body, offsetLines } = useMemo(() => parseFrontmatter(content), [content]);
   const html = useMemo(() => renderMarkdown(body), [body]);
@@ -524,6 +555,12 @@ export default function App() {
     return () => { window.removeEventListener("dragover", prevent); window.removeEventListener("drop", prevent); };
   }, []);
   useEffect(() => () => { if (dirtyRef.current) commitContent(); }, [commitContent]);
+  useEffect(() => {
+    if (!urlOpen) return;
+    setUrlError(null);
+    const t = window.setTimeout(() => urlInputRef.current?.focus(), 30);
+    return () => window.clearTimeout(t);
+  }, [urlOpen]);
 
   // ---- file ops ----
   const active = files.find((f) => f.id === activeId) ?? null;
@@ -580,6 +617,27 @@ export default function App() {
     setActiveId(created[0].id);
   }
 
+  async function openFromUrl() {
+    const raw = toRawUrl(urlValue);
+    if (!/^https?:\/\//i.test(raw)) { setUrlError("Enter a valid http(s) URL."); return; }
+    setUrlLoading(true); setUrlError(null);
+    try {
+      const res = await fetch(raw, { redirect: "follow" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      commitContent();
+      const t = fileNameFromUrl(urlValue);
+      const f: MdFile = { id: uid(), title: t, content: text, updated: Date.now() };
+      setFiles((prev) => [...prev, f]);
+      setActiveId(f.id);
+      setUrlOpen(false); setUrlValue("");
+    } catch (err: any) {
+      setUrlError(err?.message ? `Couldn't fetch that URL (${err.message}).` : "Couldn't fetch that URL.");
+    } finally {
+      setUrlLoading(false);
+    }
+  }
+
   // ---- drag & drop ----
   function dragHasFiles(e: React.DragEvent) { return Array.from(e.dataTransfer?.types ?? []).includes("Files"); }
   function onDragEnter(e: React.DragEvent) { if (!dragHasFiles(e)) return; e.preventDefault(); dragDepth.current += 1; setDragActive(true); }
@@ -602,6 +660,35 @@ export default function App() {
             <Upload className="h-8 w-8 text-brand" />
             <div className="text-base font-semibold">Drop markdown files to open</div>
             <div className="text-xs text-muted-foreground">.md .markdown .mdx .txt</div>
+          </div>
+        </div>
+      )}
+
+      {urlOpen && (
+        <div className="absolute inset-0 z-50 flex items-start justify-center bg-background/70 pt-[18vh] backdrop-blur-sm"
+          onClick={() => { if (!urlLoading) setUrlOpen(false); }}>
+          <div className="w-[min(560px,90vw)] rounded-xl border bg-card p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Globe className="h-4 w-4 text-brand" /> Open a remote Markdown file
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Paste a raw URL or a GitHub file link (github.com/owner/repo/blob/branch/file.md).
+            </div>
+            <Input ref={urlInputRef} value={urlValue}
+              placeholder="https://raw.githubusercontent.com/owner/repo/main/README.md"
+              className="mt-3"
+              onChange={(e) => { setUrlValue(e.target.value); if (urlError) setUrlError(null); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); if (!urlLoading) void openFromUrl(); }
+                else if (e.key === "Escape") { e.preventDefault(); setUrlOpen(false); }
+              }} />
+            {urlError && <div className="mt-2 text-xs text-destructive">{urlError}</div>}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setUrlOpen(false)} disabled={urlLoading}>Cancel</Button>
+              <Button onClick={() => void openFromUrl()} disabled={urlLoading || !urlValue.trim()}>
+                {urlLoading ? "Opening…" : "Open"}
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -639,6 +726,7 @@ export default function App() {
           onChange={(e) => { void uploadFiles(e.target.files); e.currentTarget.value = ""; }} />
         <Button variant="outline" onClick={newFile}><Plus /> New</Button>
         <Button variant="outline" onClick={() => fileInputRef.current?.click()}><Upload /> Load</Button>
+        <Button variant="outline" onClick={() => setUrlOpen(true)}><Globe /> Open URL</Button>
         <Button onClick={downloadActive}><Download /> Save</Button>
         <Button variant="ghost" onClick={deleteActive} className="text-muted-foreground hover:bg-destructive hover:text-destructive-foreground">
           <Trash2 /> Delete
