@@ -656,7 +656,7 @@ export default function App() {
 
         <div className="ml-auto flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
           <span className={`h-1.5 w-1.5 rounded-full ${status.kind === "saving" ? "animate-pulse bg-[#e79d26]" : "bg-brand"}`} />
-          {status.kind === "saving" ? "Saving…" : `Saved · ${status.at ?? timeStr()}`}
+          {status.kind === "saving" ? "Saving…" : `Backed up · ${status.at ?? timeStr()}`}
         </div>
       </header>
 
