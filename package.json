@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test electron/*.test.cjs",
     "preview": "vite preview",
     "electron": "electron .",
     "electron:dev": "npm run build && electron .",

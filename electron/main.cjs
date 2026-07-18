@@ -1,5 +1,17 @@
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const path = require("path");
+const { createDocumentFiles } = require("./document-files.cjs");
+
+const documentFiles = createDocumentFiles({ dialog });
+
+function ownerFor(event) {
+  return BrowserWindow.fromWebContents(event.sender);
+}
+
+ipcMain.handle("document:open", (event) => documentFiles.open(ownerFor(event)));
+ipcMain.handle("document:open-path", (_event, filePath) => documentFiles.read(filePath));
+ipcMain.handle("document:save", (_event, request) => documentFiles.save(request?.path, request?.content));
+ipcMain.handle("document:confirm-unsaved", (event, request) => documentFiles.confirmUnsaved(ownerFor(event), request));
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -10,9 +22,50 @@ function createWindow() {
     backgroundColor: "#0d1117",
     title: "Markdown Editor",
     webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
+  });
+
+  const closeState = { dirty: false, canSave: false, title: "this document", allowed: false, prompting: false };
+
+  const updateCloseState = (event, state) => {
+    if (event.sender !== win.webContents) return;
+    closeState.dirty = state?.dirty === true;
+    closeState.canSave = state?.canSave === true;
+    closeState.title = typeof state?.title === "string" ? state.title : "this document";
+  };
+  const finishCloseSave = (event, saved) => {
+    if (event.sender !== win.webContents) return;
+    closeState.prompting = false;
+    if (saved !== true) return;
+    closeState.allowed = true;
+    win.close();
+  };
+  ipcMain.on("document:set-close-state", updateCloseState);
+  ipcMain.on("document:finish-close-save", finishCloseSave);
+
+  win.on("close", async (event) => {
+    if (closeState.allowed || !closeState.dirty) return;
+    event.preventDefault();
+    if (closeState.prompting) return;
+    closeState.prompting = true;
+    const choice = await documentFiles.confirmUnsaved(win, closeState);
+    closeState.prompting = false;
+    if (choice === "cancel") return;
+    if (choice === "save") {
+      closeState.prompting = true;
+      win.webContents.send("document:save-before-close");
+      return;
+    }
+    closeState.allowed = true;
+    win.close();
+  });
+  win.on("closed", () => {
+    ipcMain.removeListener("document:set-close-state", updateCloseState);
+    ipcMain.removeListener("document:finish-close-save", finishCloseSave);
   });
 
   win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
