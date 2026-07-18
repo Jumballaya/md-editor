@@ -78,16 +78,22 @@ test("a clean document clears its recovery copy", async () => {
   assert.equal(storage.files.has(recoveryPath), false);
 });
 
-test("recovery is not offered when the local file changed after the recovered edit", async () => {
+test("recovery opens as a detached copy when the local file changed", async () => {
   const storage = memoryFiles({ "/notes/readme.md": "on disk" });
   const dialog = fakeDialog();
   const recovery = createDocumentRecovery({ filePath: recoveryPath, dialog, ...storage });
   await recovery.update(localSession());
   storage.files.set("/notes/readme.md", "newer disk content");
 
-  assert.deepEqual(await recovery.restore({}), { status: "none" });
+  assert.deepEqual(await recovery.restore({}), {
+    status: "restored",
+    document: {
+      ...localSession(),
+      source: { kind: "detached", previousPath: "/notes/readme.md" },
+    },
+  });
   assert.deepEqual(dialog.calls[0].buttons, ["Continue"]);
-  assert.equal(storage.files.has(recoveryPath), false);
+  assert.equal(JSON.parse(storage.files.get(recoveryPath)).document.source.kind, "detached");
 });
 
 test("discarding the restore prompt removes the recovery copy", async () => {
@@ -119,6 +125,20 @@ test("restoring a remote edit preserves its original baseline and dirty state", 
 
   assert.deepEqual(await recovery.restore({}), { status: "restored", document: remote });
   assert.notEqual(remote.content, remote.savedContent);
+});
+
+test("a detached disk copy remains recoverable even when its text matches the old baseline", async () => {
+  const storage = memoryFiles();
+  const recovery = createDocumentRecovery({ filePath: recoveryPath, dialog: fakeDialog(), ...storage });
+  const detached = {
+    source: { kind: "detached", previousPath: "/notes/deleted.md" },
+    title: "deleted.md",
+    content: "last disk content",
+    savedContent: "last disk content",
+  };
+
+  assert.deepEqual(await recovery.update(detached), { status: "updated" });
+  assert.deepEqual(await recovery.restore({}), { status: "restored", document: detached });
 });
 
 test("a temporarily unavailable local file leaves its recovery copy intact", async () => {

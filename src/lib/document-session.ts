@@ -1,6 +1,7 @@
 export type DocumentSource =
   | { kind: "new" }
   | { kind: "local"; path: string }
+  | { kind: "detached"; previousPath: string }
   | { kind: "remote"; url: string };
 
 export type DocumentSession = {
@@ -26,6 +27,11 @@ export function remoteDocument(url: string, title: string, content: string): Doc
   return { source: { kind: "remote", url }, title, content, savedContent: content };
 }
 
+export function detachedDocument(document: DocumentSession): DocumentSession {
+  if (document.source.kind !== "local") return document;
+  return { ...document, source: { kind: "detached", previousPath: document.source.path } };
+}
+
 export function isDocumentDirty(document: DocumentSession): boolean {
-  return document.content !== document.savedContent;
+  return document.source.kind === "detached" || document.content !== document.savedContent;
 }

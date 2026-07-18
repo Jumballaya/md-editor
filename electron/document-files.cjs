@@ -89,6 +89,20 @@ function createDocumentFiles({ dialog, readFile = fs.readFile, writeFile = fs.wr
       if (result.response === 0) return "save";
       return "discard";
     },
+
+    async confirmExternalChange(owner, { title = "This document" } = {}) {
+      const result = await dialog.showMessageBox(owner, {
+        type: "warning",
+        title: "Document changed on disk",
+        message: `${title || "This document"} also changed outside Markdown Editor`,
+        detail: "Save a copy to preserve both versions, or explicitly choose which version should replace the other.",
+        buttons: ["Save a Copy…", "Overwrite Disk", "Reload from Disk", "Cancel"],
+        defaultId: 0,
+        cancelId: 3,
+        noLink: true,
+      });
+      return ["save-copy", "overwrite", "reload", "cancel"][result.response] || "cancel";
+    },
   };
 }
 

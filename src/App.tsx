@@ -10,7 +10,9 @@ import { Separator } from "@/components/ui/separator";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { parseFrontmatter, renderMarkdown, type FrontValue } from "@/lib/markdown";
 import { createEditor, themeCompartment, themeExtensions, setMirror } from "@/lib/cm";
+import type { ExternalDocumentChange } from "@/electron";
 import {
+  detachedDocument,
   isDocumentDirty,
   localDocument,
   newDocument,
@@ -23,6 +25,8 @@ const LS_THEME = "mdedit.theme.v2";
 const LS_LOCK = "mdedit.lock.v1";
 
 type Theme = "light" | "dark";
+type Operation = { kind: "idle" | "saving" | "error" | "info"; message?: string };
+type DiskConflict = { path: string; diskContent: string };
 const WELCOME =
   "# Welcome\n\nA focused Markdown editor for one document at a time.\n\n- Open a local file and save changes directly to disk\n- Type on the left; see the GitHub-styled preview on the right\n- Drag the center handle to resize the panes\n- Lock scrolling or select text to mirror it across panes\n\n> New and remote documents remain copies until they are saved to disk.\n";
 function initialTheme(): Theme {
@@ -159,7 +163,8 @@ export default function App() {
   const [showMeta, setShowMeta] = useState(true);
   const [locked, setLocked] = useState<boolean>(() => localStorage.getItem(LS_LOCK) === "1");
   const [dragActive, setDragActive] = useState(false);
-  const [operation, setOperation] = useState<{ kind: "idle" | "saving" | "error"; message?: string }>({ kind: "idle" });
+  const [operation, setOperation] = useState<Operation>({ kind: "idle" });
+  const [diskConflict, setDiskConflictState] = useState<DiskConflict | null>(null);
   const [urlOpen, setUrlOpen] = useState(false);
   const [urlValue, setUrlValue] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -180,6 +185,9 @@ export default function App() {
   const recoveryStartedRef = useRef(false);
   const skipInitialRecoverySyncRef = useRef(true);
   const recoveryErrorRef = useRef<string | null>(null);
+  const diskConflictRef = useRef<DiskConflict | null>(null);
+  const externalChangeRef = useRef<(change: ExternalDocumentChange) => void>(() => {});
+  const infoTimerRef = useRef<number | null>(null);
 
   const content = session.content;
   const dirty = isDocumentDirty(session);
@@ -199,6 +207,10 @@ export default function App() {
       dirty: isDocumentDirty(next),
       title: next.title,
     });
+  }, []);
+  const setDiskConflict = useCallback((next: DiskConflict | null) => {
+    diskConflictRef.current = next;
+    setDiskConflictState(next);
   }, []);
 
   // ---- preview mirror (editor selection -> exact text highlight in preview) ----
@@ -377,11 +389,83 @@ export default function App() {
   function replaceDocument(next: DocumentSession) {
     setEditorDoc(next.content);
     setCurrentSession(next);
+    setDiskConflict(null);
     setOperation({ kind: "idle" });
     clearPreviewMirror();
     clearEditorMirror();
     requestAnimationFrame(() => requestAnimationFrame(() => recomputeAnchors()));
   }
+
+  function showInfo(message: string) {
+    if (infoTimerRef.current !== null) window.clearTimeout(infoTimerRef.current);
+    setOperation({ kind: "info", message });
+    infoTimerRef.current = window.setTimeout(() => {
+      setOperation((current) => current.kind === "info" && current.message === message ? { kind: "idle" } : current);
+      infoTimerRef.current = null;
+    }, 2200);
+  }
+
+  function reloadLocalDocument(current: DocumentSession, diskContent: string) {
+    if (current.source.kind !== "local") return;
+    const view = viewRef.current;
+    const selection = view?.state.selection.main;
+    const editorScrollTop = view?.scrollDOM.scrollTop;
+    const previewScrollTop = previewScrollRef.current?.scrollTop;
+    setEditorDoc(diskContent);
+    if (view && selection) {
+      const documentLength = view.state.doc.length;
+      programmaticRef.current = true;
+      view.dispatch({ selection: {
+        anchor: Math.min(selection.anchor, documentLength),
+        head: Math.min(selection.head, documentLength),
+      } });
+      programmaticRef.current = false;
+    }
+    setCurrentSession(localDocument(current.source.path, current.title, diskContent));
+    setDiskConflict(null);
+    clearPreviewMirror();
+    clearEditorMirror();
+    showInfo("Reloaded from disk");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      scrollSyncingRef.current = true;
+      if (view && editorScrollTop !== undefined) view.scrollDOM.scrollTop = editorScrollTop;
+      if (previewScrollRef.current && previewScrollTop !== undefined) previewScrollRef.current.scrollTop = previewScrollTop;
+      recomputeAnchors();
+      requestAnimationFrame(() => { scrollSyncingRef.current = false; });
+    }));
+  }
+
+  function handleExternalChange(change: ExternalDocumentChange) {
+    if (change.status === "error") {
+      setOperation({ kind: "error", message: change.message });
+      return;
+    }
+    const current = documentRef.current;
+    if (current.source.kind !== "local" || current.source.path !== change.path) return;
+    if (change.status === "missing") {
+      setCurrentSession(detachedDocument(current));
+      setDiskConflict(null);
+      showInfo("File removed — save a copy");
+      return;
+    }
+    if (change.content === current.content) {
+      setCurrentSession({ ...current, savedContent: change.content });
+      setDiskConflict(null);
+      showInfo("Matched disk");
+      return;
+    }
+    if (change.content === current.savedContent) {
+      setDiskConflict(null);
+      showInfo("Disk change reverted");
+      return;
+    }
+    if (isDocumentDirty(current)) {
+      setDiskConflict({ path: change.path, diskContent: change.content });
+      return;
+    }
+    reloadLocalDocument(current, change.content);
+  }
+  externalChangeRef.current = handleExternalChange;
 
   // theme
   useEffect(() => {
@@ -421,7 +505,7 @@ export default function App() {
     const desktop = window.desktopDocuments;
     if (!desktop) return;
     const snapshot = session;
-    const delay = isDocumentDirty(snapshot) ? 350 : 0;
+    const delay = snapshot.source.kind !== "detached" && isDocumentDirty(snapshot) ? 350 : 0;
     const timer = window.setTimeout(() => {
       void desktop.updateRecovery(snapshot).then((result) => {
         if (result.status === "error") {
@@ -438,6 +522,28 @@ export default function App() {
     }, delay);
     return () => window.clearTimeout(timer);
   }, [recoveryReady, session]);
+  const localPath = session.source.kind === "local" ? session.source.path : null;
+  useEffect(() => {
+    const desktop = window.desktopDocuments;
+    if (!desktop) return;
+    return desktop.onExternalChange((change) => externalChangeRef.current(change));
+  }, []);
+  useEffect(() => {
+    const desktop = window.desktopDocuments;
+    if (!desktop) return;
+    if (localPath) desktop.watchLocal({ path: localPath, content: session.savedContent });
+    else desktop.stopWatching();
+  }, [localPath, session.savedContent]);
+  useEffect(() => {
+    if (dirty || !diskConflict) return;
+    const current = documentRef.current;
+    if (current.source.kind !== "local" || current.source.path !== diskConflict.path) return;
+    reloadLocalDocument(current, diskConflict.diskContent);
+  }, [dirty, diskConflict]);
+  useEffect(() => () => {
+    if (infoTimerRef.current !== null) window.clearTimeout(infoTimerRef.current);
+    window.desktopDocuments?.stopWatching();
+  }, []);
   useEffect(() => {
     window.desktopDocuments?.setCloseState({
       dirty,
@@ -551,7 +657,7 @@ export default function App() {
   }, [urlOpen]);
 
   // ---- file ops ----
-  async function saveLocalDocument(): Promise<boolean> {
+  async function saveLocalDocument(resolvesConflict = false): Promise<boolean> {
     const desktop = window.desktopDocuments;
     const snapshot = documentRef.current;
     if (!desktop || snapshot.source.kind !== "local") return false;
@@ -563,10 +669,12 @@ export default function App() {
       setOperation({ kind: "error", message: result.message });
       return false;
     }
+    desktop.watchLocal({ path: filePath, content: contentToSave });
     const current = documentRef.current;
     if (current.source.kind === "local" && current.source.path === filePath) {
       const saved = { ...current, savedContent: contentToSave };
       setCurrentSession(saved);
+      if (resolvesConflict) setDiskConflict(null);
       const recovery = await desktop.updateRecovery(saved);
       if (recovery.status === "error") {
         recoveryErrorRef.current = recovery.message;
@@ -600,6 +708,7 @@ export default function App() {
     const saved = localDocument(result.document.path, result.document.name, snapshot.content);
     const next = current === snapshot ? saved : { ...saved, content: current.content };
     setCurrentSession(next);
+    setDiskConflict(null);
     const recovery = await desktop.updateRecovery(next);
     if (recovery.status === "error") {
       recoveryErrorRef.current = recovery.message;
@@ -611,8 +720,25 @@ export default function App() {
     return true;
   }
 
+  async function resolveDiskConflict(conflict: DiskConflict): Promise<boolean> {
+    const desktop = window.desktopDocuments;
+    const current = documentRef.current;
+    if (!desktop || current.source.kind !== "local" || current.source.path !== conflict.path) return false;
+    const choice = await desktop.confirmExternalChange({ title: current.title });
+    if (choice === "save-copy") return saveDocumentAs();
+    if (choice === "overwrite") return saveLocalDocument(true);
+    if (choice === "reload") {
+      reloadLocalDocument(current, conflict.diskContent);
+      return true;
+    }
+    return false;
+  }
+
   async function saveCurrentDocument(): Promise<boolean> {
-    return documentRef.current.source.kind === "local" ? saveLocalDocument() : saveDocumentAs();
+    const current = documentRef.current;
+    if (current.source.kind !== "local") return saveDocumentAs();
+    const conflict = diskConflictRef.current;
+    return conflict?.path === current.source.path ? resolveDiskConflict(conflict) : saveLocalDocument();
   }
 
   async function canReplaceDocument(): Promise<boolean> {
@@ -770,20 +896,26 @@ export default function App() {
         </Button>
 
         <div className={`hidden w-[100px] shrink-0 items-center gap-2 whitespace-nowrap text-xs md:flex ${operation.kind === "error" ? "text-destructive" : "text-muted-foreground"}`}
-          role="status" title={operation.message}>
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${operation.kind === "error" ? "bg-destructive" : operation.kind === "saving" || dirty ? "bg-[#e79d26]" : "bg-brand"}`} />
+          role="status" title={operation.message || (diskConflict ? "This document also changed on disk." : undefined)}>
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${operation.kind === "error" ? "bg-destructive" : operation.kind === "saving" || diskConflict || dirty ? "bg-[#e79d26]" : "bg-brand"}`} />
           <span className="truncate">
             {operation.kind === "error"
               ? operation.message
               : operation.kind === "saving"
                 ? "Saving…"
-                : dirty
-                  ? "Edited"
-                  : session.source.kind === "local"
-                    ? "Saved to disk"
-                    : session.source.kind === "remote"
-                      ? "Remote copy"
-                      : "Not saved to disk"}
+                : diskConflict
+                  ? "Disk changed"
+                  : operation.kind === "info"
+                    ? operation.message
+                    : session.source.kind === "detached"
+                      ? "File missing"
+                      : dirty
+                        ? "Edited"
+                        : session.source.kind === "local"
+                          ? "Saved to disk"
+                          : session.source.kind === "remote"
+                            ? "Remote copy"
+                            : "Not saved to disk"}
           </span>
         </div>
       </header>

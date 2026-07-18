@@ -14,6 +14,11 @@ type SaveDocumentAsResult =
   | { status: "cancelled" }
   | { status: "error"; message: string };
 type UnsavedChoice = "save" | "discard" | "cancel";
+type ExternalChangeChoice = "save-copy" | "overwrite" | "reload" | "cancel";
+export type ExternalDocumentChange =
+  | { status: "changed"; path: string; content: string }
+  | { status: "missing"; path: string }
+  | { status: "error"; path: string | null; message: string };
 type RecoveryUpdateResult = { status: "updated" | "cleared" } | { status: "error"; message: string };
 type RecoveryRestoreResult =
   | { status: "restored"; document: DocumentSession }
@@ -27,11 +32,15 @@ interface DesktopDocuments {
   save(request: { path: string; content: string }): Promise<SaveDocumentResult>;
   saveAs(request: { title: string; content: string }): Promise<SaveDocumentAsResult>;
   confirmUnsaved(request: { title: string }): Promise<UnsavedChoice>;
+  confirmExternalChange(request: { title: string }): Promise<ExternalChangeChoice>;
   updateRecovery(document: DocumentSession): Promise<RecoveryUpdateResult>;
   restoreRecovery(): Promise<RecoveryRestoreResult>;
+  watchLocal(request: { path: string; content: string }): void;
+  stopWatching(): void;
   setCloseState(state: { dirty: boolean; title: string }): void;
   finishCloseSave(saved: boolean): void;
   onSaveBeforeClose(callback: () => void): () => void;
+  onExternalChange(callback: (change: ExternalDocumentChange) => void): () => void;
 }
 
 declare global {

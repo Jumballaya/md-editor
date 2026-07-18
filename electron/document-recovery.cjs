@@ -14,6 +14,9 @@ function documentSource(value) {
   if (value.kind === "local" && typeof value.path === "string" && value.path) {
     return { kind: "local", path: value.path };
   }
+  if (value.kind === "detached" && typeof value.previousPath === "string" && value.previousPath) {
+    return { kind: "detached", previousPath: value.previousPath };
+  }
   if (value.kind === "remote" && typeof value.url === "string" && value.url) {
     return { kind: "remote", url: value.url };
   }
@@ -32,6 +35,10 @@ function recoveryDocument(value) {
     content: value.content,
     savedContent: value.savedContent,
   };
+}
+
+function needsRecovery(document) {
+  return document.source.kind === "detached" || document.content !== document.savedContent;
 }
 
 function createDocumentRecovery({
@@ -65,7 +72,7 @@ function createDocumentRecovery({
   async function updateNow(value) {
     const document = recoveryDocument(value);
     if (!document) return { status: "error", message: "Couldn't update the recovery copy (invalid request)." };
-    if (document.content === document.savedContent) return discardNow();
+    if (!needsRecovery(document)) return discardNow();
 
     const record = JSON.stringify({ version: recoveryVersion, document });
     try {
@@ -91,7 +98,7 @@ function createDocumentRecovery({
     try {
       const record = JSON.parse(raw);
       const document = record?.version === recoveryVersion ? recoveryDocument(record.document) : null;
-      if (!document || document.content === document.savedContent) {
+      if (!document || !needsRecovery(document)) {
         await discardNow();
         return { status: "error", message: "Couldn't read the recovery copy (invalid data)." };
       }
@@ -115,17 +122,26 @@ function createDocumentRecovery({
         return errorResult("verify", error);
       }
       if (diskContent !== document.savedContent) {
+        if (diskContent === document.content) {
+          const cleared = await discardNow();
+          return cleared.status === "error" ? cleared : { status: "none" };
+        }
+        const recovered = {
+          ...document,
+          source: { kind: "detached", previousPath: document.source.path },
+        };
+        const updated = await updateNow(recovered);
+        if (updated.status === "error") return updated;
         await dialog.showMessageBox(owner, {
           type: "info",
-          title: "Recovery copy not restored",
+          title: "Recovered as a separate copy",
           message: `${document.title || "This document"} changed on disk`,
-          detail: "The recovery copy was based on an older version, so it was not restored.",
+          detail: "Your recovered edits were opened as an unsaved copy so the newer disk file stays untouched.",
           buttons: ["Continue"],
           defaultId: 0,
           noLink: true,
         });
-        const cleared = await discardNow();
-        return cleared.status === "error" ? cleared : { status: "none" };
+        return { status: "restored", document: recovered };
       }
     }
 

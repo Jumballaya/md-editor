@@ -106,3 +106,25 @@ test("the unsaved dialog maps native button choices to document actions", async 
   response = 2;
   assert.equal(await files.confirmUnsaved({}, { title: "notes.md" }), "cancel");
 });
+
+test("the disk-conflict dialog defaults to preserving both versions", async () => {
+  let response = 0;
+  let options;
+  const files = createDocumentFiles({
+    dialog: fakeDialog({
+      showMessageBox: async (_owner, received) => {
+        options = received;
+        return { response };
+      },
+    }),
+  });
+
+  assert.equal(await files.confirmExternalChange({}, { title: "notes.md" }), "save-copy");
+  assert.equal(options.defaultId, 0);
+  response = 1;
+  assert.equal(await files.confirmExternalChange({}, { title: "notes.md" }), "overwrite");
+  response = 2;
+  assert.equal(await files.confirmExternalChange({}, { title: "notes.md" }), "reload");
+  response = 3;
+  assert.equal(await files.confirmExternalChange({}, { title: "notes.md" }), "cancel");
+});

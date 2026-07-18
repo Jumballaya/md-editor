@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
 const path = require("path");
 const { createDocumentFiles } = require("./document-files.cjs");
 const { createDocumentRecovery } = require("./document-recovery.cjs");
+const { createDocumentWatcher } = require("./document-watcher.cjs");
 const { createRemoteDocuments } = require("./remote-documents.cjs");
 
 const documentFiles = createDocumentFiles({ dialog });
@@ -17,6 +18,7 @@ ipcMain.handle("document:save", (_event, request) => documentFiles.save(request?
 ipcMain.handle("document:save-as", (event, request) => documentFiles.saveAs(ownerFor(event), request));
 ipcMain.handle("document:open-remote", (_event, url) => remoteDocuments.open(url));
 ipcMain.handle("document:confirm-unsaved", (event, request) => documentFiles.confirmUnsaved(ownerFor(event), request));
+ipcMain.handle("document:confirm-external-change", (event, request) => documentFiles.confirmExternalChange(ownerFor(event), request));
 
 function createWindow(documentRecovery) {
   const win = new BrowserWindow({
@@ -35,6 +37,11 @@ function createWindow(documentRecovery) {
   });
 
   const closeState = { dirty: false, title: "this document", allowed: false, prompting: false };
+  const documentWatcher = createDocumentWatcher({
+    onChange: (change) => {
+      if (!win.isDestroyed()) win.webContents.send("document:external-change", change);
+    },
+  });
 
   const updateCloseState = (event, state) => {
     if (event.sender !== win.webContents) return;
@@ -57,6 +64,14 @@ function createWindow(documentRecovery) {
   };
   ipcMain.on("document:set-close-state", updateCloseState);
   ipcMain.on("document:finish-close-save", finishCloseSave);
+  const updateDocumentWatch = (event, request) => {
+    if (event.sender === win.webContents) documentWatcher.update(request);
+  };
+  const stopDocumentWatch = (event) => {
+    if (event.sender === win.webContents) documentWatcher.stop();
+  };
+  ipcMain.on("document:watch", updateDocumentWatch);
+  ipcMain.on("document:unwatch", stopDocumentWatch);
 
   win.on("close", async (event) => {
     if (closeState.allowed || !closeState.dirty) return;
@@ -74,8 +89,11 @@ function createWindow(documentRecovery) {
     void closeWithoutRecovery();
   });
   win.on("closed", () => {
+    documentWatcher.stop();
     ipcMain.removeListener("document:set-close-state", updateCloseState);
     ipcMain.removeListener("document:finish-close-save", finishCloseSave);
+    ipcMain.removeListener("document:watch", updateDocumentWatch);
+    ipcMain.removeListener("document:unwatch", stopDocumentWatch);
   });
 
   win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
