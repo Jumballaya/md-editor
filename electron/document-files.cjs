@@ -11,6 +11,11 @@ function errorMessage(action, error) {
   return `Couldn't ${action} the document (${detail}).`;
 }
 
+function suggestedFileName(title) {
+  const base = path.basename(typeof title === "string" ? title : "Untitled").trim() || "Untitled";
+  return /\.(md|markdown|mdx|txt)$/i.test(base) ? base : `${base}.md`;
+}
+
 function createDocumentFiles({ dialog, readFile = fs.readFile, writeFile = fs.writeFile }) {
   async function read(filePath) {
     try {
@@ -21,6 +26,18 @@ function createDocumentFiles({ dialog, readFile = fs.readFile, writeFile = fs.wr
       };
     } catch (error) {
       return { status: "error", message: errorMessage("open", error) };
+    }
+  }
+
+  async function write(filePath, content) {
+    if (typeof filePath !== "string" || typeof content !== "string") {
+      return { status: "error", message: "Couldn't save the document (invalid request)." };
+    }
+    try {
+      await writeFile(filePath, content, "utf8");
+      return { status: "saved" };
+    } catch (error) {
+      return { status: "error", message: errorMessage("save", error) };
     }
   }
 
@@ -37,35 +54,39 @@ function createDocumentFiles({ dialog, readFile = fs.readFile, writeFile = fs.wr
 
     read,
 
-    async save(filePath, content) {
-      if (typeof filePath !== "string" || typeof content !== "string") {
+    save: write,
+
+    async saveAs(owner, { title, content } = {}) {
+      if (typeof content !== "string") {
         return { status: "error", message: "Couldn't save the document (invalid request)." };
       }
-      try {
-        await writeFile(filePath, content, "utf8");
-        return { status: "saved" };
-      } catch (error) {
-        return { status: "error", message: errorMessage("save", error) };
-      }
+      const result = await dialog.showSaveDialog(owner, {
+        title: "Save Markdown document",
+        defaultPath: suggestedFileName(title),
+        filters: markdownFilters,
+      });
+      if (result.canceled || !result.filePath) return { status: "cancelled" };
+      const saved = await write(result.filePath, content);
+      if (saved.status === "error") return saved;
+      return {
+        status: "saved",
+        document: { path: result.filePath, name: path.basename(result.filePath) },
+      };
     },
 
-    async confirmUnsaved(owner, { canSave = false, title = "this document" } = {}) {
-      const buttons = canSave ? ["Save", "Don't Save", "Cancel"] : ["Discard Changes", "Cancel"];
-      const cancelId = buttons.length - 1;
+    async confirmUnsaved(owner, { title = "this document" } = {}) {
       const result = await dialog.showMessageBox(owner, {
         type: "warning",
         title: "Unsaved changes",
         message: `Save changes to ${title || "this document"}?`,
-        detail: canSave
-          ? "Your edits have not been saved to disk."
-          : "This document is not connected to a file on disk yet.",
-        buttons,
+        detail: "Your edits have not been saved to disk.",
+        buttons: ["Save", "Don't Save", "Cancel"],
         defaultId: 0,
-        cancelId,
+        cancelId: 2,
         noLink: true,
       });
-      if (result.response === cancelId) return "cancel";
-      if (canSave && result.response === 0) return "save";
+      if (result.response === 2) return "cancel";
+      if (result.response === 0) return "save";
       return "discard";
     },
   };

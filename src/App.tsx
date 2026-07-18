@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import {
-  FileText, Plus, FolderOpen, Download, Sun, Moon,
+  FileText, Plus, FolderOpen, Sun, Moon,
   ChevronDown, SlidersHorizontal, Lock, LockOpen, Globe, Save,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -219,7 +219,6 @@ export default function App() {
     setSession(next);
     window.desktopDocuments?.setCloseState({
       dirty: isDocumentDirty(next),
-      canSave: next.source.kind === "local",
       title: next.title,
     });
   }, []);
@@ -421,7 +420,6 @@ export default function App() {
   useEffect(() => {
     window.desktopDocuments?.setCloseState({
       dirty,
-      canSave: session.source.kind === "local",
       title: session.title,
     });
     window.document.title = `${dirty ? "● " : ""}${session.title} — Markdown Editor`;
@@ -521,7 +519,7 @@ export default function App() {
     const desktop = window.desktopDocuments;
     if (!desktop) return;
     return desktop.onSaveBeforeClose(() => {
-      void saveLocalDocument().then((saved) => desktop.finishCloseSave(saved));
+      void saveCurrentDocument().then((saved) => desktop.finishCloseSave(saved));
     });
   }, []);
   useEffect(() => {
@@ -552,22 +550,30 @@ export default function App() {
     return true;
   }
 
-  function downloadCopy(): boolean {
+  async function saveDocumentAs(): Promise<boolean> {
+    const desktop = window.desktopDocuments;
     const snapshot = documentRef.current;
-    const safeTitle = snapshot.title.replace(/[\\/:*?"<>|]+/g, "_").trim() || "untitled";
-    const name = /\.(md|markdown|mdx|txt)$/i.test(safeTitle) ? safeTitle : `${safeTitle}.md`;
-    const blob = new Blob([snapshot.content], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setCurrentSession({ ...documentRef.current, savedContent: snapshot.content });
+    if (!desktop) {
+      setOperation({ kind: "error", message: "Save is available in the desktop app." });
+      return false;
+    }
+    setOperation({ kind: "saving" });
+    const result = await desktop.saveAs({ title: snapshot.title, content: snapshot.content });
+    if (result.status === "cancelled") {
+      setOperation({ kind: "idle" });
+      return false;
+    }
+    if (result.status === "error") {
+      setOperation({ kind: "error", message: result.message });
+      return false;
+    }
+    setCurrentSession(localDocument(result.document.path, result.document.name, snapshot.content));
+    setOperation({ kind: "idle" });
     return true;
   }
 
   async function saveCurrentDocument(): Promise<boolean> {
-    return documentRef.current.source.kind === "local" ? saveLocalDocument() : downloadCopy();
+    return documentRef.current.source.kind === "local" ? saveLocalDocument() : saveDocumentAs();
   }
 
   async function canReplaceDocument(): Promise<boolean> {
@@ -575,12 +581,9 @@ export default function App() {
     if (!isDocumentDirty(current)) return true;
     const desktop = window.desktopDocuments;
     if (!desktop) return window.confirm(`Discard unsaved changes to ${current.title}?`);
-    const choice = await desktop.confirmUnsaved({
-      canSave: current.source.kind === "local",
-      title: current.title,
-    });
+    const choice = await desktop.confirmUnsaved({ title: current.title });
     if (choice === "cancel") return false;
-    if (choice === "save") return saveLocalDocument();
+    if (choice === "save") return saveCurrentDocument();
     return true;
   }
 
@@ -716,8 +719,7 @@ export default function App() {
           <Globe /><span className="hidden lg:inline">Open URL</span>
         </Button>
         <Button onClick={() => void saveCurrentDocument()} disabled={session.source.kind === "local" && !dirty}>
-          {session.source.kind === "local" ? <Save /> : <Download />}
-          {session.source.kind === "local" ? "Save" : "Download"}
+          <Save /> Save
         </Button>
 
         <Separator orientation="vertical" className="mx-1 h-6" />

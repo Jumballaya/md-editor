@@ -11,6 +11,7 @@ function ownerFor(event) {
 ipcMain.handle("document:open", (event) => documentFiles.open(ownerFor(event)));
 ipcMain.handle("document:open-path", (_event, filePath) => documentFiles.read(filePath));
 ipcMain.handle("document:save", (_event, request) => documentFiles.save(request?.path, request?.content));
+ipcMain.handle("document:save-as", (event, request) => documentFiles.saveAs(ownerFor(event), request));
 ipcMain.handle("document:confirm-unsaved", (event, request) => documentFiles.confirmUnsaved(ownerFor(event), request));
 
 function createWindow() {
@@ -29,12 +30,11 @@ function createWindow() {
     },
   });
 
-  const closeState = { dirty: false, canSave: false, title: "this document", allowed: false, prompting: false };
+  const closeState = { dirty: false, title: "this document", allowed: false, prompting: false };
 
   const updateCloseState = (event, state) => {
     if (event.sender !== win.webContents) return;
     closeState.dirty = state?.dirty === true;
-    closeState.canSave = state?.canSave === true;
     closeState.title = typeof state?.title === "string" ? state.title : "this document";
   };
   const finishCloseSave = (event, saved) => {
