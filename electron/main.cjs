@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
 const path = require("path");
 const { createDocumentFiles } = require("./document-files.cjs");
+const { createDocumentRecovery } = require("./document-recovery.cjs");
 const { createRemoteDocuments } = require("./remote-documents.cjs");
 
 const documentFiles = createDocumentFiles({ dialog });
@@ -17,7 +18,7 @@ ipcMain.handle("document:save-as", (event, request) => documentFiles.saveAs(owne
 ipcMain.handle("document:open-remote", (_event, url) => remoteDocuments.open(url));
 ipcMain.handle("document:confirm-unsaved", (event, request) => documentFiles.confirmUnsaved(ownerFor(event), request));
 
-function createWindow() {
+function createWindow(documentRecovery) {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -41,12 +42,18 @@ function createWindow() {
     closeState.title = typeof state?.title === "string" ? state.title : "this document";
     if (process.platform === "darwin") win.setDocumentEdited(closeState.dirty);
   };
+  const closeWithoutRecovery = async () => {
+    await documentRecovery.discard();
+    if (win.isDestroyed()) return;
+    closeState.allowed = true;
+    win.close();
+  };
   const finishCloseSave = (event, saved) => {
     if (event.sender !== win.webContents) return;
     closeState.prompting = false;
     if (saved !== true) return;
-    closeState.allowed = true;
-    win.close();
+    closeState.prompting = true;
+    void closeWithoutRecovery();
   };
   ipcMain.on("document:set-close-state", updateCloseState);
   ipcMain.on("document:finish-close-save", finishCloseSave);
@@ -64,8 +71,7 @@ function createWindow() {
       win.webContents.send("document:save-before-close");
       return;
     }
-    closeState.allowed = true;
-    win.close();
+    void closeWithoutRecovery();
   });
   win.on("closed", () => {
     ipcMain.removeListener("document:set-close-state", updateCloseState);
@@ -93,9 +99,16 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  createWindow();
+  const documentRecovery = createDocumentRecovery({
+    filePath: path.join(app.getPath("userData"), "document-recovery.json"),
+    dialog,
+  });
+  ipcMain.handle("document:recovery-update", (_event, document) => documentRecovery.update(document));
+  ipcMain.handle("document:recovery-restore", (event) => documentRecovery.restore(ownerFor(event)));
+
+  createWindow(documentRecovery);
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(documentRecovery);
   });
 });
 

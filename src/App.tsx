@@ -164,6 +164,7 @@ export default function App() {
   const [urlValue, setUrlValue] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
   const [urlLoading, setUrlLoading] = useState(false);
+  const [recoveryReady, setRecoveryReady] = useState(false);
 
   const cmParentRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -176,6 +177,9 @@ export default function App() {
   const lastEditorMirrorRef = useRef<string>("");
   const mirrorHlRef = useRef<any>(null);
   const urlInputRef = useRef<HTMLInputElement | null>(null);
+  const recoveryStartedRef = useRef(false);
+  const skipInitialRecoverySyncRef = useRef(true);
+  const recoveryErrorRef = useRef<string | null>(null);
 
   const content = session.content;
   const dirty = isDocumentDirty(session);
@@ -392,6 +396,49 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem(LS_LOCK, locked ? "1" : "0"); if (locked) recomputeAnchors(); }, [locked, recomputeAnchors]);
   useEffect(() => {
+    if (recoveryStartedRef.current) return;
+    recoveryStartedRef.current = true;
+    const desktop = window.desktopDocuments;
+    if (!desktop) {
+      setRecoveryReady(true);
+      return;
+    }
+    void desktop.restoreRecovery().then((result) => {
+      if (result.status === "restored") replaceDocument(result.document);
+      if (result.status === "error") {
+        recoveryErrorRef.current = result.message;
+        setOperation({ kind: "error", message: result.message });
+      }
+      setRecoveryReady(true);
+    });
+  }, []);
+  useEffect(() => {
+    if (!recoveryReady) return;
+    if (skipInitialRecoverySyncRef.current) {
+      skipInitialRecoverySyncRef.current = false;
+      return;
+    }
+    const desktop = window.desktopDocuments;
+    if (!desktop) return;
+    const snapshot = session;
+    const delay = isDocumentDirty(snapshot) ? 350 : 0;
+    const timer = window.setTimeout(() => {
+      void desktop.updateRecovery(snapshot).then((result) => {
+        if (result.status === "error") {
+          if (recoveryErrorRef.current === result.message) return;
+          recoveryErrorRef.current = result.message;
+          setOperation({ kind: "error", message: result.message });
+          return;
+        }
+        const previousError = recoveryErrorRef.current;
+        if (!previousError) return;
+        recoveryErrorRef.current = null;
+        setOperation((current) => current.kind === "error" && current.message === previousError ? { kind: "idle" } : current);
+      });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [recoveryReady, session]);
+  useEffect(() => {
     window.desktopDocuments?.setCloseState({
       dirty,
       title: session.title,
@@ -518,7 +565,15 @@ export default function App() {
     }
     const current = documentRef.current;
     if (current.source.kind === "local" && current.source.path === filePath) {
-      setCurrentSession({ ...current, savedContent: contentToSave });
+      const saved = { ...current, savedContent: contentToSave };
+      setCurrentSession(saved);
+      const recovery = await desktop.updateRecovery(saved);
+      if (recovery.status === "error") {
+        recoveryErrorRef.current = recovery.message;
+        setOperation({ kind: "error", message: recovery.message });
+        return true;
+      }
+      recoveryErrorRef.current = null;
     }
     setOperation({ kind: "idle" });
     return true;
@@ -541,7 +596,17 @@ export default function App() {
       setOperation({ kind: "error", message: result.message });
       return false;
     }
-    setCurrentSession(localDocument(result.document.path, result.document.name, snapshot.content));
+    const current = documentRef.current;
+    const saved = localDocument(result.document.path, result.document.name, snapshot.content);
+    const next = current === snapshot ? saved : { ...saved, content: current.content };
+    setCurrentSession(next);
+    const recovery = await desktop.updateRecovery(next);
+    if (recovery.status === "error") {
+      recoveryErrorRef.current = recovery.message;
+      setOperation({ kind: "error", message: recovery.message });
+      return true;
+    }
+    recoveryErrorRef.current = null;
     setOperation({ kind: "idle" });
     return true;
   }

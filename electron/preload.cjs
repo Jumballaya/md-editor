@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("desktopDocuments", {
   save: (request) => ipcRenderer.invoke("document:save", request),
   saveAs: (request) => ipcRenderer.invoke("document:save-as", request),
   confirmUnsaved: (request) => ipcRenderer.invoke("document:confirm-unsaved", request),
+  updateRecovery: (document) => ipcRenderer.invoke("document:recovery-update", document),
+  restoreRecovery: () => ipcRenderer.invoke("document:recovery-restore"),
   setCloseState: (state) => ipcRenderer.send("document:set-close-state", state),
   finishCloseSave: (saved) => ipcRenderer.send("document:finish-close-save", saved),
   onSaveBeforeClose(callback) {

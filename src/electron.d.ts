@@ -1,3 +1,5 @@
+import type { DocumentSession } from "@/lib/document-session";
+
 type OpenDocumentResult =
   | { status: "opened"; document: { path: string; name: string; content: string } }
   | { status: "cancelled" }
@@ -12,6 +14,11 @@ type SaveDocumentAsResult =
   | { status: "cancelled" }
   | { status: "error"; message: string };
 type UnsavedChoice = "save" | "discard" | "cancel";
+type RecoveryUpdateResult = { status: "updated" | "cleared" } | { status: "error"; message: string };
+type RecoveryRestoreResult =
+  | { status: "restored"; document: DocumentSession }
+  | { status: "none" }
+  | { status: "error"; message: string };
 
 interface DesktopDocuments {
   open(): Promise<OpenDocumentResult>;
@@ -20,11 +27,17 @@ interface DesktopDocuments {
   save(request: { path: string; content: string }): Promise<SaveDocumentResult>;
   saveAs(request: { title: string; content: string }): Promise<SaveDocumentAsResult>;
   confirmUnsaved(request: { title: string }): Promise<UnsavedChoice>;
+  updateRecovery(document: DocumentSession): Promise<RecoveryUpdateResult>;
+  restoreRecovery(): Promise<RecoveryRestoreResult>;
   setCloseState(state: { dirty: boolean; title: string }): void;
   finishCloseSave(saved: boolean): void;
   onSaveBeforeClose(callback: () => void): () => void;
 }
 
-interface Window {
-  desktopDocuments?: DesktopDocuments;
+declare global {
+  interface Window {
+    desktopDocuments?: DesktopDocuments;
+  }
 }
+
+export {};
