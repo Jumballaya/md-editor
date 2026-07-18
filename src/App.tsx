@@ -153,32 +153,6 @@ function blockElOf(node: Node | null, art: HTMLElement): HTMLElement | null {
   return null;
 }
 
-function toRawUrl(input: string): string {
-  const s = input.trim();
-  try {
-    const u = new URL(s);
-    if (u.hostname === "github.com") {
-      const parts = u.pathname.split("/").filter(Boolean);
-      if (parts.length >= 5 && (parts[2] === "blob" || parts[2] === "raw")) {
-        const [owner, repo, , branch, ...rest] = parts;
-        return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${rest.join("/")}`;
-      }
-    }
-  } catch { /* not a URL; return as-is */ }
-  return s;
-}
-
-function fileNameFromUrl(input: string): string {
-  try {
-    const u = new URL(input.trim());
-    const parts = u.pathname.split("/").filter(Boolean);
-    const last = parts[parts.length - 1] || "remote";
-    return decodeURIComponent(last).replace(/\.(md|markdown|mdx|txt)$/i, "").trim() || "remote";
-  } catch {
-    return "remote";
-  }
-}
-
 export default function App() {
   const [session, setSession] = useState<DocumentSession>(() => welcomeDocument(WELCOME));
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -422,7 +396,7 @@ export default function App() {
       dirty,
       title: session.title,
     });
-    window.document.title = `${dirty ? "● " : ""}${session.title} — Markdown Editor`;
+    window.document.title = `${session.title} — Markdown Editor`;
   }, [dirty, session.source.kind, session.title]);
 
   // register a CSS Custom Highlight for exact preview-side mirror ranges
@@ -610,22 +584,16 @@ export default function App() {
   }
 
   async function openFromUrl() {
-    const raw = toRawUrl(urlValue);
-    if (!/^https?:\/\//i.test(raw)) { setUrlError("Enter a valid http(s) URL."); return; }
+    const desktop = window.desktopDocuments;
+    if (!desktop) { setUrlError("Open URL is available in the desktop app."); return; }
     if (!(await canReplaceDocument())) return;
     setUrlLoading(true); setUrlError(null);
-    try {
-      const res = await fetch(raw, { redirect: "follow" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const t = fileNameFromUrl(urlValue);
-      replaceDocument(remoteDocument(urlValue, t, text));
-      setUrlOpen(false); setUrlValue("");
-    } catch (err: any) {
-      setUrlError(err?.message ? `Couldn't fetch that URL (${err.message}).` : "Couldn't fetch that URL.");
-    } finally {
-      setUrlLoading(false);
-    }
+    const result = await desktop.openRemote(urlValue);
+    setUrlLoading(false);
+    if (result.status === "error") { setUrlError(result.message); return; }
+    const opened = result.document;
+    replaceDocument(remoteDocument(opened.url, opened.name, opened.content));
+    setUrlOpen(false); setUrlValue("");
   }
 
   // ---- drag & drop ----
@@ -706,7 +674,10 @@ export default function App() {
         <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-transparent px-2 py-1.5">
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="truncate text-sm font-medium" title={session.title}>{session.title}</span>
-          {dirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#e79d26]" title="Unsaved changes" />}
+          <span
+            aria-hidden="true"
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${dirty ? "bg-[#e79d26]" : "bg-transparent"}`}
+          />
         </div>
 
         <Button variant="outline" aria-label="New document" className="px-2.5 lg:px-4" onClick={() => void newFile()}>
@@ -733,7 +704,7 @@ export default function App() {
           {theme === "dark" ? <Sun /> : <Moon />}
         </Button>
 
-        <div className={`hidden max-w-[190px] items-center gap-2 whitespace-nowrap text-xs md:flex ${operation.kind === "error" ? "text-destructive" : "text-muted-foreground"}`}
+        <div className={`hidden w-[100px] shrink-0 items-center gap-2 whitespace-nowrap text-xs md:flex ${operation.kind === "error" ? "text-destructive" : "text-muted-foreground"}`}
           role="status" title={operation.message}>
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${operation.kind === "error" ? "bg-destructive" : operation.kind === "saving" || dirty ? "bg-[#e79d26]" : "bg-brand"}`} />
           <span className="truncate">

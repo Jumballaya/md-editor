@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("desktopDocuments", {
   open: () => ipcRenderer.invoke("document:open"),
   openDroppedFile: (file) => ipcRenderer.invoke("document:open-path", webUtils.getPathForFile(file)),
+  openRemote: (url) => ipcRenderer.invoke("document:open-remote", url),
   save: (request) => ipcRenderer.invoke("document:save", request),
   saveAs: (request) => ipcRenderer.invoke("document:save-as", request),
   confirmUnsaved: (request) => ipcRenderer.invoke("document:confirm-unsaved", request),

@@ -1,8 +1,10 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
 const path = require("path");
 const { createDocumentFiles } = require("./document-files.cjs");
+const { createRemoteDocuments } = require("./remote-documents.cjs");
 
 const documentFiles = createDocumentFiles({ dialog });
+const remoteDocuments = createRemoteDocuments({ fetch: (url, options) => net.fetch(url, options) });
 
 function ownerFor(event) {
   return BrowserWindow.fromWebContents(event.sender);
@@ -12,6 +14,7 @@ ipcMain.handle("document:open", (event) => documentFiles.open(ownerFor(event)));
 ipcMain.handle("document:open-path", (_event, filePath) => documentFiles.read(filePath));
 ipcMain.handle("document:save", (_event, request) => documentFiles.save(request?.path, request?.content));
 ipcMain.handle("document:save-as", (event, request) => documentFiles.saveAs(ownerFor(event), request));
+ipcMain.handle("document:open-remote", (_event, url) => remoteDocuments.open(url));
 ipcMain.handle("document:confirm-unsaved", (event, request) => documentFiles.confirmUnsaved(ownerFor(event), request));
 
 function createWindow() {
@@ -36,6 +39,7 @@ function createWindow() {
     if (event.sender !== win.webContents) return;
     closeState.dirty = state?.dirty === true;
     closeState.title = typeof state?.title === "string" ? state.title : "this document";
+    if (process.platform === "darwin") win.setDocumentEdited(closeState.dirty);
   };
   const finishCloseSave = (event, saved) => {
     if (event.sender !== win.webContents) return;
