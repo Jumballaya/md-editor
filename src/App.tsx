@@ -2,13 +2,14 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { EditorView } from "@codemirror/view";
 import {
   FileText, Plus, FolderOpen, Sun, Moon,
-  ChevronDown, SlidersHorizontal, Lock, LockOpen, Globe, Save,
+  ChevronDown, SlidersHorizontal, Lock, LockOpen, Globe, Save, TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { parseFrontmatter, renderMarkdown, type FrontValue } from "@/lib/markdown";
+import { parseFrontmatter, type FrontmatterValue } from "@/lib/frontmatter";
+import { renderMarkdown } from "@/lib/markdown";
 import { createEditor, themeCompartment, themeExtensions, setMirror } from "@/lib/cm";
 import type { ExternalDocumentChange } from "@/electron";
 import {
@@ -34,25 +35,71 @@ function initialTheme(): Theme {
   if (s === "light" || s === "dark") return s;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
-function renderFrontValue(value: FrontValue) {
+function scalarText(value: string | number | boolean | null): string {
+  if (value === null || value === "") return "—";
+  return String(value);
+}
+
+function renderFrontValue(value: FrontmatterValue, depth = 0) {
+  if (value === null) return <span className="text-muted-foreground/70">—</span>;
+  if (typeof value !== "object") {
+    if (value === "") return <span className="text-muted-foreground/70">—</span>;
+    if (typeof value === "boolean") {
+      return (
+        <span className={`inline-flex rounded-[3px] border px-1.5 font-mono text-[10px] leading-4 ${value ? "border-brand/30 bg-brand/10 text-foreground" : "bg-muted/50 text-muted-foreground"}`}>
+          {String(value)}
+        </span>
+      );
+    }
+    if (typeof value === "number") return <span className="font-mono text-[11px] tabular-nums">{value}</span>;
+    if (value.includes("\n")) {
+      return <span className="block whitespace-pre-wrap border-l border-border/70 pl-2 font-mono text-[11px] leading-4 text-foreground/85">{value.trimEnd()}</span>;
+    }
+    return <span className="break-words">{value}</span>;
+  }
+
   if (Array.isArray(value)) {
-    if (!value.length) return <span className="text-muted-foreground">-</span>;
+    if (!value.length) return <span className="text-muted-foreground/70">—</span>;
+    const scalarItems = value.every((item) => item === null || typeof item !== "object");
+    if (scalarItems) {
+      const visible = value.slice(0, 18) as Array<string | number | boolean | null>;
+      return (
+        <div className="flex flex-wrap gap-1">
+          {visible.map((item, index) => (
+            <span key={index} className="rounded-[3px] border border-border/70 bg-background/50 px-1.5 font-mono text-[10px] leading-4 text-foreground/85">
+              {scalarText(item)}
+            </span>
+          ))}
+          {value.length > visible.length && <span className="font-mono text-[10px] leading-4 text-muted-foreground">+{value.length - visible.length}</span>}
+        </div>
+      );
+    }
     return (
-      <div className="flex flex-wrap gap-1.5">
-        {value.map((item, i) => (
-          <span key={i} className="rounded-full border px-2 py-0.5 text-xs">{item}</span>
+      <ol className="space-y-1 border-l border-border/70 pl-2.5">
+        {value.slice(0, 12).map((item, index) => (
+          <li key={index} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-1.5">
+            <span className="pt-px font-mono text-[9px] leading-4 text-muted-foreground/65">{index + 1}</span>
+            <div className="min-w-0">{renderFrontValue(item, depth + 1)}</div>
+          </li>
         ))}
-      </div>
+        {value.length > 12 && <li className="font-mono text-[10px] text-muted-foreground">+{value.length - 12} more</li>}
+      </ol>
     );
   }
-  if (typeof value === "boolean")
-    return (
-      <span className={"inline-block rounded-full px-2 py-0.5 text-xs font-medium " + (value ? "bg-brand/20 text-foreground" : "bg-secondary text-muted-foreground")}>
-        {value ? "true" : "false"}
-      </span>
-    );
-  if (!value) return <span className="text-muted-foreground">-</span>;
-  return <span className="break-words">{value}</span>;
+
+  const entries = Object.entries(value);
+  if (!entries.length) return <span className="text-muted-foreground/70">&#123;&#125;</span>;
+  return (
+    <dl className={`grid grid-cols-[minmax(3.5rem,max-content)_minmax(0,1fr)] gap-x-3 gap-y-1 ${depth > 0 ? "border-l border-border/70 pl-2.5" : ""}`}>
+      {entries.slice(0, 20).map(([key, item]) => (
+        <Fragment key={key}>
+          <dt className="truncate font-mono text-[10px] leading-4 text-muted-foreground" title={key}>{key}</dt>
+          <dd className="min-w-0 leading-4">{renderFrontValue(item, depth + 1)}</dd>
+        </Fragment>
+      ))}
+      {entries.length > 20 && <dd className="col-span-2 font-mono text-[10px] text-muted-foreground">+{entries.length - 20} more fields</dd>}
+    </dl>
+  );
 }
 
 function decodeEntities(s: string): string {
@@ -191,7 +238,8 @@ export default function App() {
 
   const content = session.content;
   const dirty = isDocumentDirty(session);
-  const { entries: frontmatter, body, offsetLines } = useMemo(() => parseFrontmatter(content), [content]);
+  const frontmatterResult = useMemo(() => parseFrontmatter(content), [content]);
+  const { entries: frontmatter, body, offsetLines } = frontmatterResult;
   const html = useMemo(() => renderMarkdown(body), [body]);
   const htmlObj = useMemo(() => ({ __html: html }), [html]);
 
@@ -935,21 +983,37 @@ export default function App() {
             PREVIEW <span className="opacity-40">·</span> github <span className="text-brand">●</span>
           </div>
           <div ref={previewScrollRef} onScroll={onPreviewScroll} className="flex-1 overflow-auto">
-            {frontmatter.length > 0 && (
-              <div className="border-b px-10 pt-7 pb-5">
-                <button type="button" onClick={() => setShowMeta((v) => !v)} className="flex w-full items-center gap-2 text-left">
-                  <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${showMeta ? "" : "-rotate-90"}`} />
-                  <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Frontmatter</span>
-                  <span className="ml-auto font-mono text-[11px] text-muted-foreground">{frontmatter.length} field{frontmatter.length > 1 ? "s" : ""}</span>
+            {frontmatterResult.status === "error" && (
+              <div className="border-b border-destructive/20 bg-destructive/[0.035] px-8 py-2.5">
+                <div className="flex items-center gap-2">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                  <span className="text-[11px] font-semibold text-foreground/90">Frontmatter error</span>
+                  <span className="ml-auto font-mono text-[9.5px] tabular-nums text-destructive/80">
+                    L{frontmatterResult.error.line}:{frontmatterResult.error.column}
+                  </span>
+                </div>
+                <p className="mt-1 break-words pl-[22px] text-[11px] leading-4 text-muted-foreground">
+                  {frontmatterResult.error.message} The source remains visible below.
+                </p>
+              </div>
+            )}
+            {frontmatterResult.status === "parsed" && frontmatter.length > 0 && (
+              <div className="border-b bg-muted/[0.14] px-8 py-2">
+                <button type="button" aria-expanded={showMeta} onClick={() => setShowMeta((v) => !v)} className="flex min-h-5 w-full items-center gap-1.5 text-left">
+                  <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform duration-150 ${showMeta ? "" : "-rotate-90"}`} />
+                  <SlidersHorizontal className="h-3 w-3 text-muted-foreground/80" />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Frontmatter</span>
+                  <span className="ml-auto rounded-[3px] bg-muted/70 px-1.5 font-mono text-[9.5px] leading-4 text-muted-foreground">
+                    {frontmatter.length} field{frontmatter.length === 1 ? "" : "s"}
+                  </span>
                 </button>
-                <div className={`grid transition-all duration-200 ease-out ${showMeta ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                <div className={`grid transition-all duration-150 ease-out ${showMeta ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
                   <div className="overflow-hidden">
-                    <dl className="grid grid-cols-[max-content_1fr] gap-x-5 gap-y-2.5 pt-4 text-sm">
+                    <dl className="grid grid-cols-[minmax(5rem,0.32fr)_minmax(0,1fr)] gap-x-4 gap-y-1.5 pt-2 pb-0.5 text-[12px] leading-4">
                       {frontmatter.map(({ key, value }) => (
                         <Fragment key={key}>
-                          <dt className="pt-0.5 font-mono text-xs uppercase tracking-wide text-muted-foreground">{key}</dt>
-                          <dd className="min-w-0">{renderFrontValue(value)}</dd>
+                          <dt className="truncate pt-px font-mono text-[10px] leading-4 text-muted-foreground" title={key}>{key}</dt>
+                          <dd className="min-w-0 text-foreground/90">{renderFrontValue(value)}</dd>
                         </Fragment>
                       ))}
                     </dl>
