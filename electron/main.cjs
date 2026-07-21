@@ -1,5 +1,6 @@
-const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, shell } = require("electron");
 const path = require("path");
+const { installApplicationMenu } = require("./application-menu.cjs");
 const { createDocumentFiles } = require("./document-files.cjs");
 const { createDocumentRecovery } = require("./document-recovery.cjs");
 const { createDocumentWatcher } = require("./document-watcher.cjs");
@@ -7,6 +8,7 @@ const { createRemoteDocuments } = require("./remote-documents.cjs");
 
 const documentFiles = createDocumentFiles({ dialog });
 const remoteDocuments = createRemoteDocuments({ fetch: (url, options) => net.fetch(url, options) });
+const APP_NAME = "Markdown Editor";
 
 function ownerFor(event) {
   return BrowserWindow.fromWebContents(event.sender);
@@ -26,6 +28,7 @@ function createWindow(documentRecovery) {
     height: 800,
     minWidth: 640,
     minHeight: 420,
+    show: false,
     backgroundColor: "#0d1117",
     title: "Markdown Editor",
     webPreferences: {
@@ -34,6 +37,9 @@ function createWindow(documentRecovery) {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  win.once("ready-to-show", () => {
+    if (!win.isDestroyed()) win.show();
   });
 
   const closeState = { dirty: false, title: "this document", allowed: false, prompting: false };
@@ -123,6 +129,16 @@ app.whenReady().then(() => {
   });
   ipcMain.handle("document:recovery-update", (_event, document) => documentRecovery.update(document));
   ipcMain.handle("document:recovery-restore", (event) => documentRecovery.restore(ownerFor(event)));
+
+  installApplicationMenu({
+    Menu,
+    appName: APP_NAME,
+    platform: process.platform,
+    dispatch(command) {
+      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+      if (win && !win.isDestroyed()) win.webContents.send("application:command", command);
+    },
+  });
 
   createWindow(documentRecovery);
   app.on("activate", () => {

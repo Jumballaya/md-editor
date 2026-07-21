@@ -25,8 +25,8 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["Geist Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        sans: ["ui-sans-serif", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", "monospace"],
       },
       keyframes: {
         "accordion-down": { from: { height: "0" }, to: { height: "var(--radix-accordion-content-height)" } },

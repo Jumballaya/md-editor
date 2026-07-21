@@ -1,10 +1,15 @@
 # Markdown Editor
 
-A live, side-by-side Markdown editor. Raw monospace on the left, GitHub-styled
-preview on the right, with a draggable divider, light/dark toggle, multi-file
-support, autosave, upload, and `.md` download. Everything persists to
-`localStorage`. Built with Vite + React + Tailwind + shadcn/ui, and packaged as
-a lightweight desktop app with Electron.
+A focused desktop Markdown editor for one document at a time. Markdown source
+stays on the left and a GitHub-styled preview stays on the right, separated by
+a draggable divider.
+
+- Open local Markdown files and save directly back to disk
+- Import a raw URL or GitHub file as a new local copy
+- Reload clean documents changed by another app and reconcile dirty conflicts
+- Restore unsaved edits after a crash or restart
+- Parse and display YAML frontmatter without hiding malformed source
+- Use native desktop commands for New, Open, Save, Save As, Undo, and Redo
 
 ## Screenshots
 
@@ -34,14 +39,14 @@ Grab the latest desktop build from the
 
 ```bash
 npm install
-npm run dev          # web dev server on http://localhost:8080
-npm run electron:dev # build web assets and launch the desktop app
+npm run dev   # build and launch the desktop app
+npm test      # run Electron and frontmatter tests
 ```
 
 ## Build desktop packages locally
 
 ```bash
-npm run dist   # builds installers for your current OS into ./release
+npm run package   # build installers for your current OS into ./release
 ```
 
 ## Releasing

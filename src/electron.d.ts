@@ -15,6 +15,7 @@ type SaveDocumentAsResult =
   | { status: "error"; message: string };
 type UnsavedChoice = "save" | "discard" | "cancel";
 type ExternalChangeChoice = "save-copy" | "overwrite" | "reload" | "cancel";
+type MenuCommand = "new" | "open" | "open-url" | "save" | "save-as";
 export type ExternalDocumentChange =
   | { status: "changed"; path: string; content: string }
   | { status: "missing"; path: string }
@@ -41,11 +42,12 @@ interface DesktopDocuments {
   finishCloseSave(saved: boolean): void;
   onSaveBeforeClose(callback: () => void): () => void;
   onExternalChange(callback: (change: ExternalDocumentChange) => void): () => void;
+  onMenuCommand(callback: (command: MenuCommand) => void): () => void;
 }
 
 declare global {
   interface Window {
-    desktopDocuments?: DesktopDocuments;
+    desktopDocuments: DesktopDocuments;
   }
 }
 

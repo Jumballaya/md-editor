@@ -251,7 +251,7 @@ export default function App() {
   const setCurrentSession = useCallback((next: DocumentSession) => {
     documentRef.current = next;
     setSession(next);
-    window.desktopDocuments?.setCloseState({
+    window.desktopDocuments.setCloseState({
       dirty: isDocumentDirty(next),
       title: next.title,
     });
@@ -531,10 +531,6 @@ export default function App() {
     if (recoveryStartedRef.current) return;
     recoveryStartedRef.current = true;
     const desktop = window.desktopDocuments;
-    if (!desktop) {
-      setRecoveryReady(true);
-      return;
-    }
     void desktop.restoreRecovery().then((result) => {
       if (result.status === "restored") replaceDocument(result.document);
       if (result.status === "error") {
@@ -551,7 +547,6 @@ export default function App() {
       return;
     }
     const desktop = window.desktopDocuments;
-    if (!desktop) return;
     const snapshot = session;
     const delay = snapshot.source.kind !== "detached" && isDocumentDirty(snapshot) ? 350 : 0;
     const timer = window.setTimeout(() => {
@@ -572,13 +567,10 @@ export default function App() {
   }, [recoveryReady, session]);
   const localPath = session.source.kind === "local" ? session.source.path : null;
   useEffect(() => {
-    const desktop = window.desktopDocuments;
-    if (!desktop) return;
-    return desktop.onExternalChange((change) => externalChangeRef.current(change));
+    return window.desktopDocuments.onExternalChange((change) => externalChangeRef.current(change));
   }, []);
   useEffect(() => {
     const desktop = window.desktopDocuments;
-    if (!desktop) return;
     if (localPath) desktop.watchLocal({ path: localPath, content: session.savedContent });
     else desktop.stopWatching();
   }, [localPath, session.savedContent]);
@@ -590,10 +582,10 @@ export default function App() {
   }, [dirty, diskConflict]);
   useEffect(() => () => {
     if (infoTimerRef.current !== null) window.clearTimeout(infoTimerRef.current);
-    window.desktopDocuments?.stopWatching();
+    window.desktopDocuments.stopWatching();
   }, []);
   useEffect(() => {
-    window.desktopDocuments?.setCloseState({
+    window.desktopDocuments.setCloseState({
       dirty,
       title: session.title,
     });
@@ -675,28 +667,23 @@ export default function App() {
   }, [setEditorMirror, clearEditorMirror, clearPreviewMirror]);
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        void saveCurrentDocument();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-  useEffect(() => {
     const prevent = (e: Event) => e.preventDefault();
     window.addEventListener("dragover", prevent);
     window.addEventListener("drop", prevent);
     return () => { window.removeEventListener("dragover", prevent); window.removeEventListener("drop", prevent); };
   }, []);
   useEffect(() => {
-    const desktop = window.desktopDocuments;
-    if (!desktop) return;
-    return desktop.onSaveBeforeClose(() => {
-      void saveCurrentDocument().then((saved) => desktop.finishCloseSave(saved));
+    return window.desktopDocuments.onSaveBeforeClose(() => {
+      void saveCurrentDocument().then((saved) => window.desktopDocuments.finishCloseSave(saved));
     });
   }, []);
+  useEffect(() => window.desktopDocuments.onMenuCommand((command) => {
+    if (command === "new") void newFile();
+    else if (command === "open") void openLocalDocument();
+    else if (command === "open-url") setUrlOpen(true);
+    else if (command === "save") void saveCurrentDocument();
+    else if (command === "save-as") void saveDocumentAs();
+  }), []);
   useEffect(() => {
     if (!urlOpen) return;
     setUrlError(null);
@@ -708,7 +695,7 @@ export default function App() {
   async function saveLocalDocument(resolvesConflict = false): Promise<boolean> {
     const desktop = window.desktopDocuments;
     const snapshot = documentRef.current;
-    if (!desktop || snapshot.source.kind !== "local") return false;
+    if (snapshot.source.kind !== "local") return false;
     const filePath = snapshot.source.path;
     const contentToSave = snapshot.content;
     setOperation({ kind: "saving" });
@@ -738,10 +725,6 @@ export default function App() {
   async function saveDocumentAs(): Promise<boolean> {
     const desktop = window.desktopDocuments;
     const snapshot = documentRef.current;
-    if (!desktop) {
-      setOperation({ kind: "error", message: "Save is available in the desktop app." });
-      return false;
-    }
     setOperation({ kind: "saving" });
     const result = await desktop.saveAs({ title: snapshot.title, content: snapshot.content });
     if (result.status === "cancelled") {
@@ -771,7 +754,7 @@ export default function App() {
   async function resolveDiskConflict(conflict: DiskConflict): Promise<boolean> {
     const desktop = window.desktopDocuments;
     const current = documentRef.current;
-    if (!desktop || current.source.kind !== "local" || current.source.path !== conflict.path) return false;
+    if (current.source.kind !== "local" || current.source.path !== conflict.path) return false;
     const choice = await desktop.confirmExternalChange({ title: current.title });
     if (choice === "save-copy") return saveDocumentAs();
     if (choice === "overwrite") return saveLocalDocument(true);
@@ -793,7 +776,6 @@ export default function App() {
     const current = documentRef.current;
     if (!isDocumentDirty(current)) return true;
     const desktop = window.desktopDocuments;
-    if (!desktop) return window.confirm(`Discard unsaved changes to ${current.title}?`);
     const choice = await desktop.confirmUnsaved({ title: current.title });
     if (choice === "cancel") return false;
     if (choice === "save") return saveCurrentDocument();
@@ -802,10 +784,6 @@ export default function App() {
 
   async function openLocalDocument() {
     const desktop = window.desktopDocuments;
-    if (!desktop) {
-      setOperation({ kind: "error", message: "Open is available in the desktop app." });
-      return;
-    }
     const result = await desktop.open();
     if (result.status === "cancelled") return;
     if (result.status === "error") {
@@ -824,7 +802,6 @@ export default function App() {
 
   async function openFromUrl() {
     const desktop = window.desktopDocuments;
-    if (!desktop) { setUrlError("Open URL is available in the desktop app."); return; }
     if (!(await canReplaceDocument())) return;
     setUrlLoading(true); setUrlError(null);
     const result = await desktop.openRemote(urlValue);
@@ -845,8 +822,8 @@ export default function App() {
     const file = Array.from(e.dataTransfer.files).find((candidate) =>
       /\.(md|markdown|mdx|txt)$/i.test(candidate.name) || candidate.type === "text/markdown" || candidate.type === "text/plain"
     );
+    if (!file) return;
     const desktop = window.desktopDocuments;
-    if (!file || !desktop) return;
     void (async () => {
       if (!(await canReplaceDocument())) return;
       const result = await desktop.openDroppedFile(file);

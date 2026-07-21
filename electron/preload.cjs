@@ -24,4 +24,9 @@ contextBridge.exposeInMainWorld("desktopDocuments", {
     ipcRenderer.on("document:external-change", listener);
     return () => ipcRenderer.removeListener("document:external-change", listener);
   },
+  onMenuCommand(callback) {
+    const listener = (_event, command) => callback(command);
+    ipcRenderer.on("application:command", listener);
+    return () => ipcRenderer.removeListener("application:command", listener);
+  },
 });
