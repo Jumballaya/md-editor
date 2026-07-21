@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("desktopDocuments", {
   confirmExternalChange: (request) => ipcRenderer.invoke("document:confirm-external-change", request),
   updateRecovery: (document) => ipcRenderer.invoke("document:recovery-update", document),
   restoreRecovery: () => ipcRenderer.invoke("document:recovery-restore"),
+  rememberDocument: (document) => ipcRenderer.invoke("preferences:remember-document", document),
+  restorePreviousDocument: () => ipcRenderer.invoke("preferences:restore-document"),
   watchLocal: (request) => ipcRenderer.send("document:watch", request),
   stopWatching: () => ipcRenderer.send("document:unwatch"),
   setCloseState: (state) => ipcRenderer.send("document:set-close-state", state),

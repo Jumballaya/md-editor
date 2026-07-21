@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, Menu, net, shell } = require("elect
 const path = require("path");
 const { installApplicationMenu } = require("./application-menu.cjs");
 const { createDocumentFiles } = require("./document-files.cjs");
+const { createPreferences } = require("./preferences.cjs");
 const { createDocumentRecovery } = require("./document-recovery.cjs");
 const { createDocumentWatcher } = require("./document-watcher.cjs");
 const { createRemoteDocuments } = require("./remote-documents.cjs");
@@ -22,10 +23,10 @@ ipcMain.handle("document:open-remote", (_event, url) => remoteDocuments.open(url
 ipcMain.handle("document:confirm-unsaved", (event, request) => documentFiles.confirmUnsaved(ownerFor(event), request));
 ipcMain.handle("document:confirm-external-change", (event, request) => documentFiles.confirmExternalChange(ownerFor(event), request));
 
-function createWindow(documentRecovery) {
+function createWindow(documentRecovery, preferences, windowState) {
+  const bounds = windowState?.bounds || { width: 1200, height: 800 };
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    ...bounds,
     minWidth: 640,
     minHeight: 420,
     show: false,
@@ -41,6 +42,7 @@ function createWindow(documentRecovery) {
   win.once("ready-to-show", () => {
     if (!win.isDestroyed()) win.show();
   });
+  if (windowState?.maximized) win.maximize();
 
   const closeState = { dirty: false, title: "this document", allowed: false, prompting: false };
   const documentWatcher = createDocumentWatcher({
@@ -80,6 +82,7 @@ function createWindow(documentRecovery) {
   ipcMain.on("document:unwatch", stopDocumentWatch);
 
   win.on("close", async (event) => {
+    void preferences.rememberWindow({ bounds: win.getNormalBounds(), maximized: win.isMaximized() });
     if (closeState.allowed || !closeState.dirty) return;
     event.preventDefault();
     if (closeState.prompting) return;
@@ -122,13 +125,18 @@ function createWindow(documentRecovery) {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const documentRecovery = createDocumentRecovery({
     filePath: path.join(app.getPath("userData"), "document-recovery.json"),
     dialog,
   });
+  const preferences = createPreferences({
+    filePath: path.join(app.getPath("userData"), "preferences.json"),
+  });
   ipcMain.handle("document:recovery-update", (_event, document) => documentRecovery.update(document));
   ipcMain.handle("document:recovery-restore", (event) => documentRecovery.restore(ownerFor(event)));
+  ipcMain.handle("preferences:remember-document", (_event, document) => preferences.rememberDocument(document));
+  ipcMain.handle("preferences:restore-document", () => preferences.restoreDocument());
 
   installApplicationMenu({
     Menu,
@@ -140,9 +148,11 @@ app.whenReady().then(() => {
     },
   });
 
-  createWindow(documentRecovery);
+  createWindow(documentRecovery, preferences, await preferences.windowState());
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(documentRecovery);
+    if (BrowserWindow.getAllWindows().length === 0) {
+      void preferences.windowState().then((windowState) => createWindow(documentRecovery, preferences, windowState));
+    }
   });
 });
 

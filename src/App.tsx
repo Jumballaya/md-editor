@@ -24,6 +24,7 @@ import {
 
 const LS_THEME = "mdedit.theme.v2";
 const LS_LOCK = "mdedit.lock.v1";
+const LS_META = "mdedit.frontmatter.v1";
 
 type Theme = "light" | "dark";
 type Operation = { kind: "idle" | "saving" | "error" | "info"; message?: string };
@@ -207,7 +208,7 @@ function blockElOf(node: Node | null, art: HTMLElement): HTMLElement | null {
 export default function App() {
   const [session, setSession] = useState<DocumentSession>(() => welcomeDocument(WELCOME));
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [showMeta, setShowMeta] = useState(true);
+  const [showMeta, setShowMeta] = useState(() => localStorage.getItem(LS_META) !== "0");
   const [locked, setLocked] = useState<boolean>(() => localStorage.getItem(LS_LOCK) === "1");
   const [dragActive, setDragActive] = useState(false);
   const [operation, setOperation] = useState<Operation>({ kind: "idle" });
@@ -527,19 +528,31 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => { localStorage.setItem(LS_LOCK, locked ? "1" : "0"); if (locked) recomputeAnchors(); }, [locked, recomputeAnchors]);
+  useEffect(() => { localStorage.setItem(LS_META, showMeta ? "1" : "0"); }, [showMeta]);
   useEffect(() => {
     if (recoveryStartedRef.current) return;
     recoveryStartedRef.current = true;
     const desktop = window.desktopDocuments;
-    void desktop.restoreRecovery().then((result) => {
-      if (result.status === "restored") replaceDocument(result.document);
-      if (result.status === "error") {
-        recoveryErrorRef.current = result.message;
-        setOperation({ kind: "error", message: result.message });
+    void (async () => {
+      const recovery = await desktop.restoreRecovery();
+      if (recovery.status === "restored") replaceDocument(recovery.document);
+      else if (recovery.status === "none") {
+        const previous = await desktop.restorePreviousDocument();
+        if (previous.status === "restored") replaceDocument(previous.document);
+        if (previous.status === "error") setOperation({ kind: "error", message: previous.message });
+      } else {
+        recoveryErrorRef.current = recovery.message;
+        setOperation({ kind: "error", message: recovery.message });
       }
       setRecoveryReady(true);
-    });
+    })();
   }, []);
+  useEffect(() => {
+    if (!recoveryReady) return;
+    void window.desktopDocuments.rememberDocument(session).then((result) => {
+      if (result.status === "error") setOperation({ kind: "error", message: result.message });
+    });
+  }, [recoveryReady, session.source, session.title, session.savedContent]);
   useEffect(() => {
     if (!recoveryReady) return;
     if (skipInitialRecoverySyncRef.current) {

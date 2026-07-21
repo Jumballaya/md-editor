@@ -25,6 +25,11 @@ type RecoveryRestoreResult =
   | { status: "restored"; document: DocumentSession }
   | { status: "none" }
   | { status: "error"; message: string };
+type PreferenceUpdateResult = { status: "saved" } | { status: "error"; message: string };
+type PreviousDocumentRestoreResult =
+  | { status: "restored"; document: DocumentSession }
+  | { status: "none" }
+  | { status: "error"; message: string };
 
 interface DesktopDocuments {
   open(): Promise<OpenDocumentResult>;
@@ -36,6 +41,8 @@ interface DesktopDocuments {
   confirmExternalChange(request: { title: string }): Promise<ExternalChangeChoice>;
   updateRecovery(document: DocumentSession): Promise<RecoveryUpdateResult>;
   restoreRecovery(): Promise<RecoveryRestoreResult>;
+  rememberDocument(document: DocumentSession): Promise<PreferenceUpdateResult>;
+  restorePreviousDocument(): Promise<PreviousDocumentRestoreResult>;
   watchLocal(request: { path: string; content: string }): void;
   stopWatching(): void;
   setCloseState(state: { dirty: boolean; title: string }): void;

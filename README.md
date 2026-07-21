@@ -8,6 +8,7 @@ a draggable divider.
 - Import a raw URL or GitHub file as a new local copy
 - Reload clean documents changed by another app and reconcile dirty conflicts
 - Restore unsaved edits after a crash or restart
+- Reopen the previous document and remember window and editor preferences
 - Parse and display YAML frontmatter without hiding malformed source
 - Use native desktop commands for New, Open, Save, Save As, Undo, and Redo
 

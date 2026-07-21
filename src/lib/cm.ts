@@ -28,7 +28,7 @@ export const mirrorField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-const mono = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+const mono = '"Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 
 // Plain editor styling that matches the original monospace textarea look:
 // same font, size, line-height, generous padding, mint caret/selection, no
