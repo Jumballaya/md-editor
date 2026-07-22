@@ -2,7 +2,7 @@ function commandItem(label, accelerator, command, dispatch) {
   return { label, accelerator, click: () => dispatch(command) };
 }
 
-function buildApplicationMenu({ appName, platform, dispatch }) {
+function buildApplicationMenu({ appName, platform, dispatch, showAbout = () => {} }) {
   const template = [];
 
   if (platform === "darwin") {
@@ -58,12 +58,18 @@ function buildApplicationMenu({ appName, platform, dispatch }) {
     ],
   });
   template.push({ role: "windowMenu" });
+  if (platform !== "darwin") {
+    template.push({
+      label: "Help",
+      submenu: [{ label: `About ${appName}`, click: showAbout }],
+    });
+  }
 
   return template;
 }
 
-function installApplicationMenu({ Menu, appName, platform, dispatch }) {
-  const template = buildApplicationMenu({ appName, platform, dispatch });
+function installApplicationMenu({ Menu, appName, platform, dispatch, showAbout }) {
+  const template = buildApplicationMenu({ appName, platform, dispatch, showAbout });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 

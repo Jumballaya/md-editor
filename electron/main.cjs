@@ -11,6 +11,12 @@ const documentFiles = createDocumentFiles({ dialog });
 const remoteDocuments = createRemoteDocuments({ fetch: (url, options) => net.fetch(url, options) });
 const APP_NAME = "Markdown Editor";
 
+function applicationIconPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "icon.png")
+    : path.join(__dirname, "..", "build", "icon.png");
+}
+
 function ownerFor(event) {
   return BrowserWindow.fromWebContents(event.sender);
 }
@@ -32,6 +38,7 @@ function createWindow(documentRecovery, preferences, windowState) {
     show: false,
     backgroundColor: "#0d1117",
     title: "Markdown Editor",
+    icon: applicationIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -126,6 +133,16 @@ function createWindow(documentRecovery, preferences, windowState) {
 }
 
 app.whenReady().then(async () => {
+  app.setAboutPanelOptions({
+    applicationName: APP_NAME,
+    applicationVersion: app.getVersion(),
+    version: app.getVersion(),
+    copyright: `Copyright © ${new Date().getFullYear()} Jumballaya`,
+    credits: "A focused desktop Markdown editor.",
+    authors: ["Jumballaya"],
+    website: "https://github.com/Jumballaya/md-editor",
+    iconPath: applicationIconPath(),
+  });
   const documentRecovery = createDocumentRecovery({
     filePath: path.join(app.getPath("userData"), "document-recovery.json"),
     dialog,
@@ -142,6 +159,7 @@ app.whenReady().then(async () => {
     Menu,
     appName: APP_NAME,
     platform: process.platform,
+    showAbout: () => app.showAboutPanel(),
     dispatch(command) {
       const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
       if (win && !win.isDestroyed()) win.webContents.send("application:command", command);

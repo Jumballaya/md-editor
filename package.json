@@ -1,5 +1,6 @@
 {
   "name": "md-editor",
+  "productName": "Markdown Editor",
   "private": true,
   "version": "0.1.3",
   "type": "module",
@@ -51,6 +52,12 @@
   "author": {
     "name": "Jumballaya"
   },
+  "homepage": "https://github.com/Jumballaya/md-editor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jumballaya/md-editor.git"
+  },
+  "copyright": "Copyright © 2026 Jumballaya",
   "license": "MIT",
   "main": "electron/main.cjs",
   "build": {
@@ -64,7 +71,14 @@
       "dist/**/*",
       "electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "mac": {
+      "icon": "build/icon.png",
       "target": [
         "dmg",
         "zip"
@@ -72,12 +86,14 @@
       "category": "public.app-category.productivity"
     },
     "win": {
+      "icon": "build/icon.png",
       "target": [
         "nsis",
         "portable"
       ]
     },
     "linux": {
+      "icon": "build/icon.png",
       "target": [
         "AppImage",
         "deb"

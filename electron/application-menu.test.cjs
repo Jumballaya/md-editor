@@ -37,6 +37,21 @@ test("platform conventions determine the application and exit menus", () => {
   assert.equal(menuNamed(mac, "Edit").submenu[1].role, "redo");
 });
 
+test("non-Mac platforms expose the configured About panel", () => {
+  let shown = false;
+  const windows = buildApplicationMenu({
+    appName: "Markdown Editor",
+    platform: "win32",
+    dispatch() {},
+    showAbout: () => { shown = true; },
+  });
+
+  const about = menuNamed(windows, "Help").submenu[0];
+  assert.equal(about.label, "About Markdown Editor");
+  about.click();
+  assert.equal(shown, true);
+});
+
 test("install builds and applies the native menu", () => {
   let builtTemplate;
   let installedMenu;
