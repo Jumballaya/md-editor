@@ -927,10 +927,10 @@ export default function App() {
           {theme === "dark" ? <Sun /> : <Moon />}
         </Button>
 
-        <div className={`hidden w-[100px] shrink-0 items-center gap-2 whitespace-nowrap text-xs md:flex ${operation.kind === "error" ? "text-destructive" : "text-muted-foreground"}`}
+        <div className={`hidden w-[120px] shrink-0 items-center gap-2 whitespace-nowrap text-xs md:flex ${operation.kind === "error" ? "text-destructive" : "text-muted-foreground"}`}
           role="status" title={operation.message || (diskConflict ? "This document also changed on disk." : undefined)}>
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${operation.kind === "error" ? "bg-destructive" : operation.kind === "saving" || diskConflict || dirty ? "bg-[#e79d26]" : "bg-brand"}`} />
-          <span className="truncate">
+          <span className="min-w-0 truncate">
             {operation.kind === "error"
               ? operation.message
               : operation.kind === "saving"
