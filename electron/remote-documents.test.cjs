@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createRemoteDocuments } = require("./remote-documents.cjs");
 
-test("opening a remote document returns its source URL, filename, and contents", async () => {
+test("opening a remote document returns its fetched URL, filename, and contents", async () => {
   const requests = [];
   const remote = createRemoteDocuments({
     fetch: async (...args) => {
@@ -37,7 +37,7 @@ test("GitHub file pages are fetched through raw.githubusercontent.com", async ()
 
   assert.equal(requestedUrl, "https://raw.githubusercontent.com/Jumballaya/md-editor/main/README.md");
   assert.equal(result.document.name, "README.md");
-  assert.equal(result.document.url, "https://github.com/Jumballaya/md-editor/blob/main/README.md");
+  assert.equal(result.document.url, "https://raw.githubusercontent.com/Jumballaya/md-editor/main/README.md");
 });
 
 test("invalid and non-http URLs are rejected before fetching", async () => {

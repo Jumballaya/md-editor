@@ -241,7 +241,8 @@ export default function App() {
   const dirty = isDocumentDirty(session);
   const frontmatterResult = useMemo(() => parseFrontmatter(content), [content]);
   const { entries: frontmatter, body, offsetLines } = frontmatterResult;
-  const html = useMemo(() => renderMarkdown(body), [body]);
+  const remoteContentUrl = session.source.kind === "remote" ? session.source.url : undefined;
+  const html = useMemo(() => renderMarkdown(body, remoteContentUrl), [body, remoteContentUrl]);
   const htmlObj = useMemo(() => ({ __html: html }), [html]);
 
   // latest values for stable CM callbacks

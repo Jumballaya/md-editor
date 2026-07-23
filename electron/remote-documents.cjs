@@ -15,7 +15,7 @@ function remoteRequest(input) {
     const encodedName = parts[parts.length - 1] || "Remote.md";
     let name = encodedName;
     try { name = decodeURIComponent(encodedName); } catch { /* keep encoded filename */ }
-    return { sourceUrl: sourceUrl.toString(), requestUrl: githubRawUrl(sourceUrl), name };
+    return { requestUrl: githubRawUrl(sourceUrl), name };
   } catch {
     return null;
   }
@@ -41,7 +41,7 @@ function createRemoteDocuments({ fetch }) {
         const content = await response.text();
         return {
           status: "opened",
-          document: { url: request.sourceUrl, name: request.name, content },
+          document: { url: request.requestUrl, name: request.name, content },
         };
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
